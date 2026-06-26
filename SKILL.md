@@ -68,7 +68,52 @@ print('Merged %d repos: %d nodes, %d edges, %d flows' % (len(graphs), len(merged
 
 ### Step 4 - Semantic layer (selective; skip if --depth structural)
 
-Only when NOT `--depth structural`: dispatch Claude Code subagents (Agent tool, `general-purpose`, in parallel, one message) to (a) name modules/communities in plain language, (b) validate `AMBIGUOUS` edges, (c) write a plain-language description for each E2E flow. This uses the current session - never an API key. Merge their JSON back into `graph.json`. Print the token counts from each Agent result.
+Skip this step entirely when `--depth structural` is present.
+
+**4a — Identify GraphQL participants**
+
+Load `e2egraph-out/graph.json` and call `lib.semantic.gql_participants(graph)` to obtain two sorted lists: `consumers` (repos with a `GRAPHQL` env var or a `calls_api` edge whose target contains "graphql") and `providers` (repos with a `defines_gql_op` edge). If both lists are empty, skip 4b–4d and go straight to community naming below.
+
+**4b — Dispatch Claude Code subagents (no API key)**
+
+Send a **single message** with one `Agent` tool call per consumer–provider pair, all in parallel. Use agent type `general-purpose`. There is NO provider API key anywhere in e2egraph; these run in the current Claude Code session only.
+
+Prompt template for each subagent (fill in `<CONSUMER_PATH>` and `<PROVIDER_PATH>` from the detect output):
+
+> You are analysing GraphQL usage between two local repositories.
+> Consumer repo: `<CONSUMER_PATH>` — read its GraphQL operations: look for gql template literals (`.gql`, `.graphql` files, `gql\`...\`` tagged literals, `DocumentNode` variables).
+> Provider repo: `<PROVIDER_PATH>` — read its resolvers: look for `@Query()`, `@Mutation()`, `@ResolveField()` decorators (NestJS), or SDL type definitions (`.graphql` schema files).
+> Only assert a link when a consumed operation name **plausibly matches** a resolver name. When uncertain, note it in the description field — these become AMBIGUOUS edges.
+> Return STRICT JSON only, no markdown fences, no extra keys:
+> ```json
+> {
+>   "gql_links": [
+>     {"consumer": "<consumer-repo-name>", "provider": "<provider-repo-name>",
+>      "operation": "<operationName>", "kind": "query|mutation|subscription",
+>      "description": "<one sentence; flag uncertainty>",
+>      "evidence": "<file:line or literal snippet>"}
+>   ],
+>   "flow_descriptions": {
+>     "<existing flow name from graph.json>": "<plain-language rewrite>"
+>   }
+> }
+> ```
+> If nothing found, return `{"gql_links": [], "flow_descriptions": {}}`.
+
+**4c — Merge results**
+
+For each agent result, parse the JSON and call:
+```python
+from lib.semantic import merge_semantic
+merge_semantic(graph, result)
+```
+After processing all agents, re-save `graph.json`. Print a summary: how many `gql_links` were added and the token counts from each Agent result.
+
+**4d — Community naming (all runs)**
+
+Also dispatch one additional subagent that reads the merged `graph.json` node list and returns `{"community_names": {"<node-id>": "<plain-language name>"}}` for any cluster/community nodes present. Merge those names into matching node labels via `merge_semantic(graph, result)` and re-save.
+
+**Guarantee:** No API key is used at any point. All subagents run inside the current Claude Code session via the Agent tool.
 
 ### Step 5 - Render outputs
 
