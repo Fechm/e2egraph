@@ -57,5 +57,28 @@ class TestRelations(unittest.TestCase):
         edges = extract_relations("a.txt", "unknownlang", "whatever")
         self.assertIsInstance(edges, list)
 
+    def test_nestjs_config_service_env(self):
+        src = "const u = this.configService.get('USERS_API_URL');\n" \
+              "const k = configService.get('ACME_SECRET_KEY');\n"
+        edges = extract_relations("a.ts", "ts", src)
+        env = [e for e in edges if e["type"] == "uses_env"]
+        names = {e["target_name"] for e in env}
+        self.assertIn("USERS_API_URL", names)          # service var, verbatim
+        self.assertNotIn("ACME_SECRET_KEY", names)      # secret var masked
+        self.assertTrue(any("•" in n for n in names))
+
+    def test_drizzle_pgtable_and_pgschema(self):
+        src = "export const users = pgTable('app_users', { id: serial() });\n" \
+              "export const sch = pgSchema('billing');\n"
+        edges = extract_relations("schema.ts", "ts", src)
+        tbls = {e["target_name"] for e in edges if e["type"] == "declares_table"}
+        self.assertIn("app_users", tbls)
+        self.assertIn("billing", tbls)
+
+    def test_existing_process_env_still_works(self):
+        edges = extract_relations("b.ts", "ts", "const x = process.env.GATEWAY_URL;")
+        self.assertTrue(any(e["type"] == "uses_env" and e["target_name"] == "GATEWAY_URL"
+                            for e in edges))
+
 if __name__ == "__main__":
     unittest.main()
