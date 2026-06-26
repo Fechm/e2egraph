@@ -23,5 +23,16 @@ class TestDetect(unittest.TestCase):
             self.assertTrue(any(p.endswith("src/index.ts") for p in files_a))
             self.assertFalse(any("node_modules" in p for p in files_a))
 
+    def test_root_is_itself_a_repo(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._make(root, "package.json", "{}")
+            self._make(root, "src/app.ts", "export const y = 2")
+            result = detect(root)
+            self.assertEqual(len(result["repos"]), 1)
+            repo = result["repos"][0]
+            self.assertEqual(repo["name"], os.path.basename(os.path.abspath(root)))
+            files = [f["path"] for f in repo["files"]]
+            self.assertTrue(any(p.endswith("src/app.ts") for p in files))
+
 if __name__ == "__main__":
     unittest.main()

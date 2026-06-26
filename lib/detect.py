@@ -34,7 +34,11 @@ def _list_files(repo_path):
     return files
 
 def detect(root):
-    """Return {'root', 'repos': [{'name','path','files':[{path,lang}]}]}."""
+    """Return {'root', 'repos': [{'name','path','files':[{path,lang}]}]}.
+
+    When ``root`` is not itself a repo, repos are discovered one level deep
+    only (direct subdirectories), by design.
+    """
     root = os.path.abspath(root)
     repos = []
     if _is_repo_root(root):
