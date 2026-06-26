@@ -141,5 +141,60 @@ class TestCrossRepo(unittest.TestCase):
         merged = merge_graphs([web, api])
         self.assertFalse(any(e["type"] == "calls_endpoint" for e in merged["edges"]))
 
+    def test_exact_match_beats_superset_repo(self):
+        # UMAS_API_HOST must resolve to umas-api, NOT umas-toku-due-sync-worker
+        a = {"repo": "umas-api", "nodes": [
+            {"id": "umas-api", "type": "repo", "repo": "umas-api", "label": "umas-api"}], "edges": []}
+        w = {"repo": "umas-toku-due-sync-worker", "nodes": [
+            {"id": "umas-toku-due-sync-worker", "type": "repo", "repo": "umas-toku-due-sync-worker",
+             "label": "umas-toku-due-sync-worker"},
+            {"id": "umas-toku-due-sync-worker:env:UMAS_API_HOST", "type": "env_var",
+             "repo": "umas-toku-due-sync-worker", "label": "UMAS_API_HOST"}], "edges": []}
+        merged = merge_graphs([a, w])
+        cs = [e for e in merged["edges"] if e["type"] == "calls_service"]
+        self.assertTrue(any(e["target"] == "umas-api" for e in cs))
+        self.assertFalse(any(e["target"] == "umas-toku-due-sync-worker" for e in cs))
+
+    def test_shared_word_backend_is_ambiguous(self):
+        # NEXT_PUBLIC_GRAPHQL_BACKEND_URL must NOT resolve when two *-backend repos exist
+        web = {"repo": "collaborator-portal-webapp", "nodes": [
+            {"id": "collaborator-portal-webapp", "type": "repo", "repo": "collaborator-portal-webapp",
+             "label": "collaborator-portal-webapp"},
+            {"id": "collaborator-portal-webapp:env:NEXT_PUBLIC_GRAPHQL_BACKEND_URL", "type": "env_var",
+             "repo": "collaborator-portal-webapp", "label": "NEXT_PUBLIC_GRAPHQL_BACKEND_URL"}], "edges": []}
+        b1 = {"repo": "collaborator-portal-backend", "nodes": [
+            {"id": "collaborator-portal-backend", "type": "repo", "repo": "collaborator-portal-backend",
+             "label": "collaborator-portal-backend"}], "edges": []}
+        b2 = {"repo": "online-payments-backend", "nodes": [
+            {"id": "online-payments-backend", "type": "repo", "repo": "online-payments-backend",
+             "label": "online-payments-backend"}], "edges": []}
+        merged = merge_graphs([web, b1, b2])
+        self.assertFalse(any(e["type"] == "calls_service" for e in merged["edges"]))
+
+    def test_short_acronym_service_matches(self):
+        # TNE_API_ADDRESS -> tne-api (the old len>=4 cutoff wrongly dropped this)
+        gw = {"repo": "gateway-api", "nodes": [
+            {"id": "gateway-api", "type": "repo", "repo": "gateway-api", "label": "gateway-api"},
+            {"id": "gateway-api:env:TNE_API_ADDRESS", "type": "env_var",
+             "repo": "gateway-api", "label": "TNE_API_ADDRESS"}], "edges": []}
+        tne = {"repo": "tne-api", "nodes": [
+            {"id": "tne-api", "type": "repo", "repo": "tne-api", "label": "tne-api"}], "edges": []}
+        merged = merge_graphs([gw, tne])
+        self.assertTrue(any(e["type"] == "calls_service" and e["source"] == "gateway-api"
+                            and e["target"] == "tne-api" for e in merged["edges"]))
+
+    def test_subset_unique_service_matches(self):
+        # DOCUMENTS_API_ADDRESS -> services-documents-api (candidate {documents} subset, unique)
+        gw = {"repo": "gateway-api", "nodes": [
+            {"id": "gateway-api", "type": "repo", "repo": "gateway-api", "label": "gateway-api"},
+            {"id": "gateway-api:env:DOCUMENTS_API_ADDRESS", "type": "env_var",
+             "repo": "gateway-api", "label": "DOCUMENTS_API_ADDRESS"}], "edges": []}
+        doc = {"repo": "services-documents-api", "nodes": [
+            {"id": "services-documents-api", "type": "repo", "repo": "services-documents-api",
+             "label": "services-documents-api"}], "edges": []}
+        merged = merge_graphs([gw, doc])
+        self.assertTrue(any(e["type"] == "calls_service" and e["target"] == "services-documents-api"
+                            for e in merged["edges"]))
+
 if __name__ == "__main__":
     unittest.main()

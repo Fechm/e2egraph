@@ -33,18 +33,28 @@ def _service_candidate_tokens(varname):
         toks.pop()
     return toks
 
-def _match_repo(varname, repo_token_map):
-    cand = _service_candidate_tokens(varname)
-    meaningful = [t for t in cand if t not in _GENERIC_TOKENS and len(t) >= 4]
-    if not meaningful:
+def _significant(tokens):
+    """Tokens that meaningfully identify a service: drop generics, keep len>=3."""
+    return {t for t in tokens if t not in _GENERIC_TOKENS and len(t) >= 3}
+
+def _match_repo(varname, repo_sig_map):
+    """Resolve a service var to exactly one repo, or None if ambiguous/unknown.
+
+    repo_sig_map: {repo_name: significant_token_set}. Matches by exact significant-set
+    equality first, then unique candidate-subset; never guesses on a tie.
+    """
+    cand = _significant(_service_candidate_tokens(varname))
+    if not cand:
         return None
-    best = None
-    for repo_name, rtoks in repo_token_map.items():
-        if cand and cand == list(_norm_tokens(repo_name)):
-            return repo_name
-        if any(t in rtoks for t in meaningful):
-            best = repo_name
-    return best
+    exact = [r for r, sig in repo_sig_map.items() if sig == cand]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        return None
+    subset = [r for r, sig in repo_sig_map.items() if cand <= sig]
+    if len(subset) == 1:
+        return subset[0]
+    return None
 
 def merge_graphs(graphs):
     nodes = []
@@ -85,7 +95,7 @@ def merge_graphs(graphs):
                           "description": f"{', '.join(sorted(repos))} share proto service {label}."})
     # Resolve service env vars to repo calls_service edges
     repo_names = [n["label"] for n in nodes if n.get("type") == "repo" and n.get("label")]
-    repo_token_map = {rn: set(_norm_tokens(rn)) for rn in repo_names}
+    repo_sig_map = {rn: _significant(_norm_tokens(rn)) for rn in repo_names}
     seen_calls = set()
     for n in nodes:
         if n.get("type") != "env_var":
@@ -93,8 +103,8 @@ def merge_graphs(graphs):
         if classify_env(n.get("label", "")) != "service":
             continue
         owner = n.get("repo")
-        target_repo = _match_repo(n.get("label", ""), repo_token_map)
-        if target_repo and target_repo != owner and owner in repo_token_map:
+        target_repo = _match_repo(n.get("label", ""), repo_sig_map)
+        if target_repo and target_repo != owner and owner in repo_sig_map:
             key = (owner, target_repo)
             if key in seen_calls:
                 continue
