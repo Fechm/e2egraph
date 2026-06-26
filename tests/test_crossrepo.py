@@ -56,5 +56,49 @@ class TestCrossRepo(unittest.TestCase):
         self.assertEqual(len(table_nodes), 1)
         self.assertEqual(merged["flows"], [])
 
+    def test_declares_table_links_repos(self):
+        g_a = {"repo": "svc-a",
+               "nodes": [{"id": "svc-a", "type": "repo", "repo": "svc-a", "label": "svc-a"}],
+               "edges": [{"source": "svc-a:file:s.ts", "target": "users",
+                          "type": "declares_table", "confidence": "EXTRACTED",
+                          "evidence": "drizzle", "unresolved": True}]}
+        g_b = {"repo": "svc-b",
+               "nodes": [{"id": "svc-b", "type": "repo", "repo": "svc-b", "label": "svc-b"}],
+               "edges": [{"source": "svc-b:file:q.sql", "target": "users",
+                          "type": "reads_table", "confidence": "EXTRACTED",
+                          "evidence": "sql", "unresolved": True}]}
+        merged = merge_graphs([g_a, g_b])
+        self.assertTrue(any(n["type"] == "db_table" and n["label"] == "users"
+                            for n in merged["nodes"]))
+        self.assertTrue(any("Shared table" in f["name"] for f in merged["flows"]))
+
+    def test_service_env_links_to_repo(self):
+        g_gw = {"repo": "gateway-api", "nodes": [
+            {"id": "gateway-api", "type": "repo", "repo": "gateway-api", "label": "gateway-api"},
+            {"id": "gateway-api:env:USERS_API_URL", "type": "env_var",
+             "repo": "gateway-api", "label": "USERS_API_URL"}],
+            "edges": []}
+        g_users = {"repo": "users-api",
+                   "nodes": [{"id": "users-api", "type": "repo", "repo": "users-api", "label": "users-api"}],
+                   "edges": []}
+        merged = merge_graphs([g_gw, g_users])
+        self.assertTrue(any(e["type"] == "calls_service" and e["source"] == "gateway-api"
+                            and e["target"] == "users-api" for e in merged["edges"]))
+        self.assertTrue(any(f["name"] == "Service call: gateway-api → users-api"
+                            for f in merged["flows"]))
+
+    def test_generic_env_var_does_not_match(self):
+        # A generic service var, and one whose meaningful token matches no repo, must NOT create a calls_service edge.
+        g = {"repo": "svc-a", "nodes": [
+            {"id": "svc-a", "type": "repo", "repo": "svc-a", "label": "svc-a"},
+            {"id": "svc-a:env:REDIS_URL", "type": "env_var", "repo": "svc-a", "label": "REDIS_URL"},
+            {"id": "svc-a:env:API_URL", "type": "env_var", "repo": "svc-a", "label": "API_URL"}],
+            "edges": []}
+        g2 = {"repo": "users-api",
+              "nodes": [{"id": "users-api", "type": "repo", "repo": "users-api", "label": "users-api"}],
+              "edges": []}
+        merged = merge_graphs([g, g2])
+        self.assertFalse(any(e["type"] == "calls_service" for e in merged["edges"]))
+
 if __name__ == "__main__":
     unittest.main()
