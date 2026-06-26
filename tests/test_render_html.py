@@ -46,5 +46,40 @@ class TestRenderHtml(unittest.TestCase):
         # Valid edge kept.
         self.assertIn('"target": "svc-b"', html)
 
+    def test_large_graph_collapses_to_repo_module_view(self):
+        nodes = [{"id": "r", "type": "repo", "repo": "r", "label": "r"},
+                 {"id": "r:mod:src", "type": "module", "repo": "r", "label": "src"}]
+        for i in range(5001):
+            nodes.append({"id": f"r:file:f{i}.ts", "type": "file", "repo": "r",
+                          "label": f"f{i}.ts"})
+        edges = [{"source": "r", "target": "r:mod:src", "type": "contains"}]
+        for i in range(5001):
+            edges.append({"source": "r:mod:src", "target": f"r:file:f{i}.ts", "type": "contains"})
+        graph = {"nodes": nodes, "edges": edges, "flows": []}
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "g.html")
+            render_html(graph, out, max_nodes=5000)
+            with open(out, encoding="utf-8") as fh:
+                html = fh.read()
+        self.assertNotIn("r:file:f0.ts", html)   # file nodes dropped
+        self.assertIn("r:mod:src", html)          # module kept
+        self.assertIn("r", html)                  # repo kept
+        self.assertIn("colaps", html.lower())     # collapse banner present
+
+    def test_small_graph_keeps_files(self):
+        graph = {"nodes": [{"id": "r", "type": "repo", "repo": "r", "label": "r"},
+                           {"id": "r:file:a.ts", "type": "file", "repo": "r", "label": "a.ts"}],
+                 "edges": [{"source": "r", "target": "r:file:a.ts", "type": "contains"}],
+                 "flows": []}
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "g.html")
+            render_html(graph, out)
+            with open(out, encoding="utf-8") as fh:
+                html = fh.read()
+        self.assertIn("r:file:a.ts", html)        # not collapsed
+        self.assertNotIn("colaps", html.lower())  # no banner
+
 if __name__ == "__main__":
     unittest.main()
