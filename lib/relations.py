@@ -20,6 +20,7 @@ ENV_RES = [
 CONFIG_RES = [
     re.compile(r"""(?:configService|config)\.get\(\s*['"]([A-Z][A-Z0-9_]+)['"]"""),
     re.compile(r"""this\.config(?:Service)?\.get\(\s*['"]([A-Z][A-Z0-9_]+)['"]"""),
+    re.compile(r"""\bconfig\.([A-Z][A-Z0-9_]+)\b"""),
 ]
 DRIZZLE_RES = [
     re.compile(r"""pgTable\(\s*['"]([^'"]+)['"]"""),

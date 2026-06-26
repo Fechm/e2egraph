@@ -21,7 +21,7 @@ def _shared_resource(merged_nodes, node_id, label, ntype):
                              "repo": None, "layer": "shared", "path": None,
                              "lang": None, "source_location": None})
 
-_SERVICE_SUFFIX_TOKENS = {"url", "host", "endpoint", "uri", "base"}
+_SERVICE_SUFFIX_TOKENS = {"url", "host", "endpoint", "uri", "base", "address"}
 _GENERIC_TOKENS = {"api", "service", "svc"} | _SERVICE_SUFFIX_TOKENS
 
 def _norm_tokens(s):

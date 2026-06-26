@@ -1,7 +1,7 @@
 """Classify env-var NAMES so secrets never reach graph artifacts. Values are never read."""
 import re
 
-SERVICE_RE = re.compile(r"(_URL|_HOST|_ENDPOINT|_URI|_BASE_URL)$|^GATEWAY_", re.I)
+SERVICE_RE = re.compile(r"(_URL|_HOST|_ENDPOINT|_URI|_BASE_URL|_ADDRESS)$|^GATEWAY_", re.I)
 # Matches suffixes that indicate credentials, plus standalone keyword patterns.
 # Split into two sub-patterns to stay within allowlist constraints.
 _SECRET_SUFFIX = re.compile(r"(_KEY|_SECRET|_TOKEN|_PASSWORD|_CREDENTIAL|_PASSWD)$", re.I)

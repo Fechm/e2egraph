@@ -115,6 +115,19 @@ class TestCrossRepo(unittest.TestCase):
                             and e["target"] == "users-api" for e in merged["edges"]))
         self.assertTrue(any(f["name"].startswith("Endpoint:") for f in merged["flows"]))
 
+    def test_address_env_links_to_repo(self):
+        gw = {"repo": "gateway-api", "nodes": [
+            {"id": "gateway-api", "type": "repo", "repo": "gateway-api", "label": "gateway-api"},
+            {"id": "gateway-api:env:USERS_API_ADDRESS", "type": "env_var",
+             "repo": "gateway-api", "label": "USERS_API_ADDRESS"}],
+            "edges": []}
+        users = {"repo": "users-api",
+                 "nodes": [{"id": "users-api", "type": "repo", "repo": "users-api", "label": "users-api"}],
+                 "edges": []}
+        merged = merge_graphs([gw, users])
+        self.assertTrue(any(e["type"] == "calls_service" and e["source"] == "gateway-api"
+                            and e["target"] == "users-api" for e in merged["edges"]))
+
     def test_endpoint_no_match_no_edge(self):
         web = {"repo": "web", "nodes": [{"id": "web", "type": "repo", "repo": "web", "label": "web"}],
                "edges": [{"source": "web:file:a.ts", "target": "${base}/v1/orders",

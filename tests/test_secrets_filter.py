@@ -15,6 +15,10 @@ class TestSecretsFilter(unittest.TestCase):
     def test_other_vars(self):
         self.assertEqual(classify_env("NODE_ENV"), "other")
 
+    def test_address_suffix_is_service(self):
+        self.assertEqual(classify_env("USERS_API_ADDRESS"), "service")
+        self.assertEqual(classify_env("PAYMENTS_API_ADDRESS"), "service")
+
     def test_mask_keeps_shape_hides_middle(self):
         masked = mask_name("ACME_SECRET_KEY")
         self.assertTrue(masked.startswith("ACME"))

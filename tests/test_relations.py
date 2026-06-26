@@ -95,5 +95,19 @@ class TestRelations(unittest.TestCase):
         self.assertEqual(normalize_endpoint_path("/v1/users/42"), "/v1/users/*")
         self.assertEqual(normalize_endpoint_path("v1/Users/:id"), "/v1/users/*")
 
+    def test_config_object_all_caps_access(self):
+        src = "const c = new UserGrpcClient(config.USERS_API_ADDRESS);\n" \
+              "const r = `${config.RBAC_API_HOST}:${config.RBAC_API_PORT}`;\n"
+        edges = extract_relations("g.ts", "ts", src)
+        names = {e["target_name"] for e in edges if e["type"] == "uses_env"}
+        self.assertIn("USERS_API_ADDRESS", names)
+        self.assertIn("RBAC_API_HOST", names)
+
+    def test_config_pattern_does_not_capture_config_service_get(self):
+        # configService.get('X') must still be captured exactly once, not doubled or broken
+        edges = extract_relations("g.ts", "ts", "const x = configService.get('USERS_API_URL');")
+        names = [e["target_name"] for e in edges if e["type"] == "uses_env"]
+        self.assertEqual(names.count("USERS_API_URL"), 1)
+
 if __name__ == "__main__":
     unittest.main()
