@@ -21,7 +21,7 @@ def render_html(graph, out_path):
     for i, e in enumerate(graph["edges"]):
         if e["source"] in node_ids and e.get("target") in node_ids:
             elements.append({"data": {"id": f"e{i}", "source": e["source"],
-                                      "target": e["target"], "etype": e["type"]}})
+                                      "target": e["target"], "etype": e.get("type", "unknown")}})
     data_json = json.dumps(elements)
     colors_json = json.dumps(_TYPE_COLOR)
     flows_json = json.dumps(graph.get("flows", []))
