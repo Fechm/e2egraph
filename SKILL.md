@@ -48,7 +48,7 @@ Read it silently; present a clean summary: `Repos: N` and per-repo file counts. 
 
 ### Step 2 - Build each repo's graph (structural, free)
 
-For each repo in the detect output, run symbols (ctags or fallback) + relations + build, writing `e2egraph-out/repos/<repo>/graph.json`. Drive this with one Python block per repo that imports `lib.symbols`, `lib.relations`, `lib.build`, reads each file's text, calls `extract_relations` and `extract_symbols_ctags`/`extract_symbols_fallback`, then `build_repo_graph`, and `json.dump`s the result. Honor `--no-ctags` by skipping `extract_symbols_ctags`. If `ctags_available()` is False, print once: `ctags not found - using regex symbol fallback.`
+For each repo in the detect output, run symbols (ctags or fallback) + relations + build, writing `e2egraph-out/repos/<repo>/graph.json`. Drive this with one Python block per repo that imports `lib.symbols`, `lib.relations`, `lib.build`, and `read_text_safe` from `lib.io_utils`; read each source file's text with `read_text_safe(path)` (it returns `""` and never raises on unreadable/non-UTF8/binary files, so one bad file cannot abort a repo); calls `extract_relations` and `extract_symbols_ctags`/`extract_symbols_fallback`, then `build_repo_graph`, and `json.dump`s the result. Honor `--no-ctags` by skipping `extract_symbols_ctags`. If `ctags_available()` is False, print once: `ctags not found - using regex symbol fallback.`
 
 For `--update`, only rebuild the repo(s) named on the command line (or whose files changed); reuse existing `repos/*/graph.json` for the rest.
 
