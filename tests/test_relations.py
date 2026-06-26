@@ -29,5 +29,33 @@ class TestRelations(unittest.TestCase):
         self.assertTrue(any(e["type"] == "reads_table" and e["target_name"] == "public.users"
                             for e in edges))
 
+    def test_proto_service(self):
+        edges = extract_relations("a.proto", "proto", "service UserService {\n}")
+        self.assertTrue(any(e["type"] == "shares_proto" and e["target_name"] == "UserService"
+                            for e in edges))
+
+    def test_sql_write_tables(self):
+        edges = extract_relations(
+            "w.sql", "sql",
+            "INSERT INTO public.orders (id) VALUES (1); UPDATE public.users SET x=1;")
+        write_names = {e["target_name"] for e in edges if e["type"] == "writes_table"}
+        self.assertIn("public.orders", write_names)
+        self.assertIn("public.users", write_names)
+
+    def test_python_imports(self):
+        edges = extract_relations("m.py", "py", "from app.core import db\nimport os\n")
+        import_names = {e["target_name"] for e in edges if e["type"] == "imports"}
+        self.assertIn("app.core", import_names)
+        self.assertIn("os", import_names)
+
+    def test_js_require_import(self):
+        edges = extract_relations("a.js", "js", "const x = require('./foo');")
+        self.assertTrue(any(e["type"] == "imports" and e["target_name"] == "./foo"
+                            for e in edges))
+
+    def test_unknown_lang_returns_list_no_raise(self):
+        edges = extract_relations("a.txt", "unknownlang", "whatever")
+        self.assertIsInstance(edges, list)
+
 if __name__ == "__main__":
     unittest.main()
