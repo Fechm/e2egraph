@@ -100,5 +100,33 @@ class TestCrossRepo(unittest.TestCase):
         merged = merge_graphs([g, g2])
         self.assertFalse(any(e["type"] == "calls_service" for e in merged["edges"]))
 
+    def test_endpoint_call_links_repos(self):
+        web = {"repo": "web", "nodes": [{"id": "web", "type": "repo", "repo": "web", "label": "web"}],
+               "edges": [{"source": "web:file:a.ts", "target": "${base}/v1/users/42",
+                          "type": "calls_api", "confidence": "INFERRED", "evidence": "fetch",
+                          "unresolved": True}]}
+        api = {"repo": "users-api",
+               "nodes": [{"id": "users-api", "type": "repo", "repo": "users-api", "label": "users-api"}],
+               "edges": [{"source": "users-api:file:c.ts", "target": "/v1/users/*",
+                          "type": "defines_endpoint", "confidence": "EXTRACTED", "evidence": "GET /v1/users/*",
+                          "unresolved": True}]}
+        merged = merge_graphs([web, api])
+        self.assertTrue(any(e["type"] == "calls_endpoint" and e["source"] == "web"
+                            and e["target"] == "users-api" for e in merged["edges"]))
+        self.assertTrue(any(f["name"].startswith("Endpoint:") for f in merged["flows"]))
+
+    def test_endpoint_no_match_no_edge(self):
+        web = {"repo": "web", "nodes": [{"id": "web", "type": "repo", "repo": "web", "label": "web"}],
+               "edges": [{"source": "web:file:a.ts", "target": "${base}/v1/orders",
+                          "type": "calls_api", "confidence": "INFERRED", "evidence": "fetch",
+                          "unresolved": True}]}
+        api = {"repo": "users-api",
+               "nodes": [{"id": "users-api", "type": "repo", "repo": "users-api", "label": "users-api"}],
+               "edges": [{"source": "users-api:file:c.ts", "target": "/v1/users/*",
+                          "type": "defines_endpoint", "confidence": "EXTRACTED", "evidence": "GET",
+                          "unresolved": True}]}
+        merged = merge_graphs([web, api])
+        self.assertFalse(any(e["type"] == "calls_endpoint" for e in merged["edges"]))
+
 if __name__ == "__main__":
     unittest.main()

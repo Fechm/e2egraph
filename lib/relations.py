@@ -32,6 +32,37 @@ API_RES = [
 SQL_READ_RE = re.compile(r"\bFROM\s+([a-zA-Z_][\w.]*)", re.I)
 SQL_WRITE_RE = re.compile(r"\b(?:INSERT\s+INTO|UPDATE)\s+([a-zA-Z_][\w.]*)", re.I)
 
+def normalize_endpoint_path(p):
+    """Normalize a REST path: lowercase, params and pure-numeric segments -> '*'."""
+    segs = [s for s in p.strip("/").split("/") if s]
+    out = []
+    for s in segs:
+        if s.isdigit() or re.fullmatch(r":[A-Za-z0-9_]+", s) or re.fullmatch(r"\{[A-Za-z0-9_]+\}", s):
+            out.append("*")
+        else:
+            out.append(s.lower())
+    return "/" + "/".join(out) if out else "/"
+
+_CONTROLLER_RE = re.compile(r"@Controller\(\s*(?:['\"]([^'\"]*)['\"])?")
+_HTTP_DECORATOR_RE = re.compile(r"@(Get|Post|Put|Delete|Patch)\(\s*(?:['\"]([^'\"]*)['\"])?")
+
+def _extract_endpoints(text):
+    """Return list of (verb, normalized_path) for NestJS controllers in one file."""
+    eps = []
+    prefix = ""
+    for line in text.splitlines():
+        mc = _CONTROLLER_RE.search(line)
+        if mc:
+            prefix = (mc.group(1) or "").strip("/")
+            continue
+        mm = _HTTP_DECORATOR_RE.search(line)
+        if mm:
+            verb = mm.group(1).upper()
+            sub = (mm.group(2) or "").strip("/")
+            full = "/".join(s for s in [prefix, sub] if s)
+            eps.append((verb, normalize_endpoint_path(full)))
+    return eps
+
 def _edge(src, etype, target_name, confidence, evidence):
     return {"source": src, "type": etype, "target_name": target_name,
             "confidence": confidence, "evidence": evidence}
@@ -75,6 +106,8 @@ def extract_relations(file_path, lang, text):
             for m in rx.finditer(text):
                 edges.append(_edge(file_path, "declares_table", m.group(1), "EXTRACTED",
                                    "drizzle table"))
+        for verb, path in _extract_endpoints(text):
+            edges.append(_edge(file_path, "defines_endpoint", path, "EXTRACTED", f"{verb} {path}"))
     if lang == "proto":
         for m in re.finditer(r"service\s+(\w+)", text):
             edges.append(_edge(file_path, "shares_proto", m.group(1), "EXTRACTED", "proto service"))

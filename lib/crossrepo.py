@@ -1,6 +1,19 @@
 """Merge per-repo graphs and resolve cross-repo edges into shared resources + E2E flows."""
 
+import re
 from lib.secrets_filter import classify_env
+from lib.relations import normalize_endpoint_path
+
+_INTERP_RE = re.compile(r"\$\{[^}]*\}")
+
+def _static_path_from_url(url):
+    u = _INTERP_RE.sub("", url)
+    m = re.search(r"/[A-Za-z0-9_\-/:{}]+", u)
+    if not m:
+        return None
+    path = normalize_endpoint_path(m.group(0))
+    # require at least 2 path segments to avoid noise like "/" or "/health"
+    return path if path.count("/") >= 2 else None
 
 def _shared_resource(merged_nodes, node_id, label, ntype):
     if not any(n["id"] == node_id for n in merged_nodes):
@@ -91,4 +104,29 @@ def merge_graphs(graphs):
             flows.append({"name": f"Service call: {owner} → {target_repo}",
                           "path": [owner, target_repo],
                           "description": f"{owner} calls {target_repo} via {n['label']}."})
+    # Index endpoints defined per repo (defines_endpoint edges)
+    endpoint_def = {}  # normalized_path -> set(repo)
+    for e in edges:
+        if e["type"] == "defines_endpoint":
+            endpoint_def.setdefault(e["target"], set()).add(e["source"].split(":")[0])
+    seen_ep = set()
+    for e in edges:
+        if e["type"] != "calls_api":
+            continue
+        consumer = e["source"].split(":")[0]
+        path = _static_path_from_url(e.get("target", "") or "")
+        if not path:
+            continue
+        for provider in endpoint_def.get(path, ()):  # exact normalized-path match
+            if provider == consumer:
+                continue
+            key = (consumer, provider, path)
+            if key in seen_ep:
+                continue
+            seen_ep.add(key)
+            edges.append({"source": consumer, "target": provider, "type": "calls_endpoint",
+                          "confidence": "INFERRED", "evidence": f"calls {path}"})
+            flows.append({"name": f"Endpoint: {consumer} → {provider} {path}",
+                          "path": [consumer, provider],
+                          "description": f"{consumer} calls {provider} endpoint {path}."})
     return {"nodes": nodes, "edges": edges, "flows": flows}

@@ -80,5 +80,20 @@ class TestRelations(unittest.TestCase):
         self.assertTrue(any(e["type"] == "uses_env" and e["target_name"] == "GATEWAY_URL"
                             for e in edges))
 
+    def test_defines_endpoint_combines_controller_and_method(self):
+        src = ("@Controller('v1/users')\n"
+               "class UsersController {\n"
+               "  @Get(':id')\n  findOne() {}\n"
+               "  @Post()\n  create() {}\n}")
+        edges = extract_relations("c.ts", "ts", src)
+        eps = {e["target_name"] for e in edges if e["type"] == "defines_endpoint"}
+        self.assertIn("/v1/users/*", eps)   # :id -> *
+        self.assertIn("/v1/users", eps)     # @Post() with no path -> prefix only
+
+    def test_normalize_endpoint_path(self):
+        from lib.relations import normalize_endpoint_path
+        self.assertEqual(normalize_endpoint_path("/v1/users/42"), "/v1/users/*")
+        self.assertEqual(normalize_endpoint_path("v1/Users/:id"), "/v1/users/*")
+
 if __name__ == "__main__":
     unittest.main()
