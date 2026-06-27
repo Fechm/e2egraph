@@ -85,5 +85,40 @@ class TestRenderFlowHtml(unittest.TestCase):
         self.assertIn("no sustituye", html.lower())  # default disclaimer present
 
 
+    def test_data_shape_table(self):
+        chain = {"feature": "f", "steps": [
+            {"id": "s1", "layer": "frontend", "repo": "webapp", "title": "T",
+             "data_shape": {"label": "saveRequestTneInput", "kind": "GraphQL input",
+                            "source": "src/graphql/mutations/saveRequestTne.ts:3",
+                            "fields": [
+                                {"name": "rut", "type": "String!", "required": True, "note": "RUT"},
+                                {"name": "imageFile", "type": "Upload", "required": False}]}}]}
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "f.html")
+            from lib.render_flow_html import render_flow_html
+            render_flow_html(chain, out)
+            with open(out, encoding="utf-8") as fh:
+                html = fh.read()
+        self.assertIn("Datos", html)                 # section title
+        self.assertIn("saveRequestTneInput", html)   # label
+        self.assertIn("String!", html)               # a type
+        self.assertIn("imageFile", html)             # a field
+        self.assertIn("RUT", html)                   # a note
+        self.assertNotIn("http://", html)
+        self.assertNotIn("https://", html)
+
+    def test_data_shape_missing_fields_no_crash(self):
+        chain = {"feature": "f", "steps": [
+            {"id": "s1", "layer": "data", "repo": "x", "title": "t",
+             "data_shape": {"label": "request_tne", "kind": "DB table"}}]}  # no fields
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "f.html")
+            from lib.render_flow_html import render_flow_html
+            render_flow_html(chain, out)   # must not raise
+            self.assertTrue(os.path.exists(out))
+
+
 if __name__ == "__main__":
     unittest.main()

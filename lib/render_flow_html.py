@@ -289,6 +289,63 @@ header p  { font-size: .9rem; color: #94a3b8; margin-top: .3rem; }
   font-style: italic;
   margin-top: .4rem;
 }
+/* Data contract block */
+.data-contract-block {
+  margin-top: 1rem;
+  border-top: 1px solid #e2e8f0;
+  padding-top: .75rem;
+}
+.data-contract-block .contract-heading {
+  font-size: .88rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: .15rem;
+}
+.data-contract-block .contract-source {
+  font-size: .75rem;
+  color: #64748b;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  margin-bottom: .55rem;
+  word-break: break-all;
+}
+.data-contract-block .contract-unresolved {
+  font-size: .82rem;
+  color: #94a3b8;
+  font-style: italic;
+}
+.contract-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .82rem;
+}
+.contract-table th {
+  text-align: left;
+  font-size: .68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: #64748b;
+  padding: .25rem .5rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+.contract-table td {
+  padding: .3rem .5rem;
+  vertical-align: top;
+  border-bottom: 1px solid #f1f5f9;
+  color: #1e293b;
+  word-break: break-word;
+}
+.contract-table td.field-type {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: .78rem;
+  color: #0f172a;
+}
+.req-badge {
+  color: #dc2626;
+  font-weight: 700;
+  font-size: .75rem;
+  margin-left: .2rem;
+}
 """
 
     # ------------------------------------------------------------------ #
@@ -364,6 +421,52 @@ function selectStep(idx) {{
       html += '<span class="next-hop-label">' + escHtml(nextStep.repo) + ' / ' + escHtml(nextStep.title) + '</span>';
       html += '</div></div>';
     }}
+  }}
+
+  // Data contract section (only when step.data_shape is present)
+  if (step.data_shape) {{
+    var ds = step.data_shape;
+    html += '<div class="data-contract-block">';
+    html += '<div class="detail-label">Datos / contrato</div>';
+
+    // Subheading: label · kind
+    var contractHeading = '';
+    if (ds.label) contractHeading += escHtml(ds.label);
+    if (ds.kind)  contractHeading += (contractHeading ? ' &middot; ' : '') + escHtml(ds.kind);
+    if (contractHeading) {{
+      html += '<div class="contract-heading">' + contractHeading + '</div>';
+    }}
+
+    // Source (file:line) if present
+    if (ds.source) {{
+      html += '<div class="contract-source">' + escHtml(ds.source) + '</div>';
+    }}
+
+    // Fields table
+    var fields = (ds.fields && ds.fields.length > 0) ? ds.fields : null;
+    if (fields) {{
+      html += '<table class="contract-table">';
+      html += '<thead><tr><th>Campo</th><th>Tipo</th><th>Nota</th></tr></thead>';
+      html += '<tbody>';
+      fields.forEach(function(f) {{
+        var nameCell = escHtml(f.name || '');
+        if (f.required === true) {{
+          nameCell += '<span class="req-badge" title="requerido">*</span>';
+        }}
+        var typeCell = escHtml(f.type || '');
+        var noteCell = escHtml(f.note || '');
+        html += '<tr>';
+        html += '<td>' + nameCell + '</td>';
+        html += '<td class="field-type">' + typeCell + '</td>';
+        html += '<td>' + noteCell + '</td>';
+        html += '</tr>';
+      }});
+      html += '</tbody></table>';
+    }} else {{
+      html += '<div class="contract-unresolved">Contrato no resuelto</div>';
+    }}
+
+    html += '</div>';
   }}
 
   // Security section (only when step.security is present)
