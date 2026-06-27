@@ -31,8 +31,11 @@ from lib.io_utils import read_text_safe
 # Compiled regexes
 # ---------------------------------------------------------------------------
 
-# Matches  gql`...`  spanning multiple lines (non-greedy, DOTALL)
-_GQL_TEMPLATE_RE = re.compile(r"gql`(.*?)`", re.DOTALL)
+# Matches ANY template literal `...` (non-greedy, DOTALL). We deliberately do
+# NOT anchor to a `gql`/`gpl`/alias tag, because real code uses tag typos
+# (`gpl\``), codegen helpers, and untagged literals. Each literal is then
+# checked for a GraphQL operation header before being treated as an operation.
+_TEMPLATE_LITERAL_RE = re.compile(r"`(.*?)`", re.DOTALL)
 
 # Operation header: query/mutation/subscription with OPTIONAL <Name> and OPTIONAL
 # variable definitions, up to the opening brace of the selection set.
@@ -121,11 +124,24 @@ def _extract_root_field(body_after_brace):
     return None
 
 
+def _looks_like_gql(literal):
+    """Heuristic: True if a template literal looks like a GraphQL operation.
+
+    Requires a query/mutation/subscription header followed (eventually) by an
+    opening brace, found near the START of the literal. This keeps CSS,
+    interpolated message strings, SQL, etc. out while remaining tag-agnostic.
+    """
+    head = literal.lstrip()[:200]
+    return _OP_HEADER_RE.search(head) is not None
+
+
 def _extract_gql_operations(text, rel_path, repo_name):
     """Yield feature dicts for GQL operations found in *text*.
 
-    Works for both .ts/.tsx/.js/.jsx (looks inside gql`...` literals) and
-    .graphql/.gql files (scans the whole text).
+    Tag-agnostic: in .ts/.tsx/.js/.jsx files it scans every template literal
+    (regardless of tag — ``gql``, the ``gpl`` typo, codegen aliases, or no tag)
+    and keeps those containing a GraphQL operation header. In .graphql/.gql
+    files it scans the whole text.
     """
     ext = os.path.splitext(rel_path)[1].lower()
     is_gql_file = ext in _GQL_EXTENSIONS
@@ -134,14 +150,21 @@ def _extract_gql_operations(text, rel_path, repo_name):
     if not (is_gql_file or is_ts_js):
         return
 
-    # Collect (chunk_text, base_offset_in_file) pairs to search
+    # Collect (chunk_text, base_offset_in_file) pairs to search. We are
+    # tag-agnostic: instead of anchoring to a `gql`/`gpl`/alias tag, we scan
+    # every template literal and keep only those that actually contain a
+    # GraphQL operation header near the start (avoids CSS/string false
+    # positives while tolerating tag typos and untagged literals).
     chunks = []
     if is_gql_file:
         chunks.append((text, 0))
-    else:  # ts/js — search inside gql`...` template literals
-        for m in _GQL_TEMPLATE_RE.finditer(text):
+    else:  # ts/js — scan every backtick template literal
+        for m in _TEMPLATE_LITERAL_RE.finditer(text):
+            literal = m.group(1)
+            if not _looks_like_gql(literal):
+                continue
             # m.start(1) is the offset just after the opening backtick
-            chunks.append((m.group(1), m.start(1)))
+            chunks.append((literal, m.start(1)))
 
     for chunk, base_offset in chunks:
         for op_m in _OP_HEADER_RE.finditer(chunk):

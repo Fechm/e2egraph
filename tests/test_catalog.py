@@ -136,5 +136,33 @@ class TestCatalog(unittest.TestCase):
             self.assertEqual(f["role"], "consumed")
             self.assertEqual(f["name"], "changeOrderEntity")  # anónima -> cae al root field
 
+    def test_gql_operation_with_gpl_typo_is_captured(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._repo(root, "web/package.json", "{}")
+            self._repo(root, "web/src/graphql/mutations/box.ts",
+                       "export default gpl`\n"
+                       "  mutation ($i: CreateBoxInformationTicketInput!) {\n"
+                       "    createBoxInformationTicket(input: $i) {\n"
+                       "      response { statusCode }\n"
+                       "    }\n"
+                       "  }\n`;\n")
+            det = detect(root)
+            feats = extract_catalog(det)
+            f = next((x for x in feats if x.get("root_field") == "createBoxInformationTicket"), None)
+            self.assertIsNotNone(f)
+            self.assertEqual(f["kind"], "mutation")
+            self.assertEqual(f["role"], "consumed")
+
+    def test_non_graphql_template_literal_not_emitted(self):
+        """Template literals without a GraphQL operation header are ignored."""
+        with tempfile.TemporaryDirectory() as root:
+            self._repo(root, "web/package.json", "{}")
+            self._repo(root, "web/src/style.ts",
+                       "const css = `\n  .box { color: red; }\n  div { margin: 0 }\n`;\n"
+                       "const msg = `hello ${name}, welcome`;\n")
+            det = detect(root)
+            feats = extract_catalog(det)
+            self.assertEqual([f for f in feats if f["role"] == "consumed"], [])
+
 if __name__ == "__main__":
     unittest.main()
