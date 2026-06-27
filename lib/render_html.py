@@ -81,8 +81,11 @@ def render_html(graph, out_path, max_nodes=5000):
                                   "ntype": n.get("type", "file")}})
     for i, e in enumerate(active_graph["edges"]):
         if e["source"] in node_ids and e.get("target") in node_ids:
-            elements.append({"data": {"id": f"e{i}", "source": e["source"],
-                                      "target": e["target"], "etype": e.get("type", "unknown")}})
+            edata = {"id": f"e{i}", "source": e["source"],
+                     "target": e["target"], "etype": e.get("type", "unknown")}
+            if "evidence" in e:
+                edata["evidence"] = e["evidence"]
+            elements.append({"data": edata})
     data_json = json.dumps(elements)
     colors_json = json.dumps(_TYPE_COLOR)
     flows_json = json.dumps(active_graph.get("flows", []))
@@ -112,9 +115,15 @@ def render_html(graph, out_path, max_nodes=5000):
   #panel{{position:absolute;top:0;bottom:0;right:0;width:280px;overflow:auto;
           border-left:1px solid #e2e8f0;padding:12px;box-sizing:border-box}}
   .flow{{padding:6px;border-bottom:1px solid #eee;font-size:13px}}
+  #detail{{margin-top:14px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;
+           border-radius:6px;font-size:12px;display:none}}
+  #detail h4{{margin:0 0 6px;font-size:13px;color:#1e293b}}
+  #detail p{{margin:4px 0;color:#475569}}
+  #detail .dl{{margin-top:8px}}
+  #detail .dl strong{{color:#1e293b}}
 </style></head><body>
 {banner_html}<div id="cy"></div>
-<div id="panel"><h3>E2E Flows</h3><div id="flows"></div></div>
+<div id="panel"><h3>E2E Flows</h3><div id="flows"></div><div id="detail"></div></div>
 <script>{_vendor_js()}</script>
 <script>
   var COLORS={colors_json};
@@ -133,6 +142,31 @@ def render_html(graph, out_path, max_nodes=5000):
   var fc=document.getElementById('flows');
   FLOWS.forEach(function(f){{var d=document.createElement('div');d.className='flow';
     d.textContent=f.name;fc.appendChild(d);}});
+  var detail=document.getElementById('detail');
+  function showDetail(html){{detail.innerHTML=html;detail.style.display='block';}}
+  cy.on('tap','node',function(evt){{
+    var n=evt.target;
+    var id=n.data('id'),lbl=n.data('label'),ntype=n.data('ntype');
+    var outEdges=cy.edges('[source="'+id+'"]');
+    var inEdges=cy.edges('[target="'+id+'"]');
+    var outList=outEdges.map(function(e){{return cy.getElementById(e.data('target')).data('label')||e.data('target');}});
+    var inList=inEdges.map(function(e){{return cy.getElementById(e.data('source')).data('label')||e.data('source');}});
+    var html='<h4>'+lbl+'</h4><p><strong>Tipo:</strong> '+ntype+'</p>';
+    html+='<div class="dl"><strong>Llama a:</strong><br>'+(outList.length?outList.join(', '):'—')+'</div>';
+    html+='<div class="dl"><strong>Llamado por:</strong><br>'+(inList.length?inList.join(', '):'—')+'</div>';
+    showDetail(html);
+  }});
+  cy.on('tap','edge',function(evt){{
+    var e=evt.target;
+    var src=cy.getElementById(e.data('source')).data('label')||e.data('source');
+    var tgt=cy.getElementById(e.data('target')).data('label')||e.data('target');
+    var etype=e.data('etype');
+    var evidence=e.data('evidence')||'';
+    var html='<h4>'+src+' → '+tgt+'</h4><p><strong>Tipo:</strong> '+etype+'</p>';
+    if(evidence){{html+='<p><strong>Evidencia:</strong> '+evidence+'</p>';}}
+    showDetail(html);
+  }});
+  cy.on('tap',function(evt){{if(evt.target===cy){{detail.style.display='none';}}}})
 </script></body></html>"""
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)

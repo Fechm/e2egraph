@@ -81,5 +81,21 @@ class TestRenderHtml(unittest.TestCase):
         self.assertIn("r:file:a.ts", html)        # not collapsed
         self.assertNotIn("colaps", html.lower())  # no banner
 
+    def test_overview_edges_carry_evidence_and_tap_handler(self):
+        graph = {"nodes": [{"id": "a", "type": "repo", "label": "a"},
+                           {"id": "b", "type": "repo", "label": "b"}],
+                 "edges": [{"source": "a", "target": "b", "type": "calls_service",
+                            "evidence": "env var B_API_URL"}],
+                 "flows": []}
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "g.html")
+            from lib.render_html import render_html
+            render_html(graph, out)
+            with open(out, encoding="utf-8") as fh:
+                html = fh.read()
+        self.assertIn("env var B_API_URL", html)   # evidence embedded
+        self.assertIn("tap", html)                  # interactivity present
+
 if __name__ == "__main__":
     unittest.main()
