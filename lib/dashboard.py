@@ -379,18 +379,23 @@ def render_dashboard_html(index, out_path):
                         f'</div>'
                     )
                 else:
+                    # Pending feature: embed root_field in a data attribute for JS to build the command
+                    # Use html.escape to safely embed the feature name; JS reads data-feature and builds the command
                     row_html = (
                         f'<div class="cat-row cat-pending" data-repo="{_esc(repo)}" data-search="{_esc(row_search)}">'
+                        f'<input type="checkbox" class="cat-select-cb" data-feature="{_esc(root_field)}" aria-label="Seleccionar {_esc(root_field)}">'
                         f'<span class="cat-name cat-name-muted">{_esc(root_field)}</span>'
                         f'<span class="cat-kind">{_esc(kind)}</span>'
                         f'<span class="cat-pending-label">pendiente de trazar</span>'
                         f'<span class="cat-file">{_esc(ffile)}:{_esc(str(line))}</span>'
+                        f'<button class="cat-trace-btn" data-feature="{_esc(root_field)}" title="/e2egraph flow &quot;{_esc(root_field)}&quot;">Trazar</button>'
                         f'</div>'
                     )
                 catalog_rows.append(row_html)
 
         catalog_rows_html = "\n".join(catalog_rows)
         catalog_section_html = f"""
+<textarea id="clip-fallback" aria-hidden="true" tabindex="-1"></textarea>
 <section id="catalog-section">
   <h2 class="section-title">Catálogo de funcionalidades
     <span class="catalog-totals">{total_features} funcionalidades &middot; {total_traced} trazadas</span>
@@ -400,6 +405,9 @@ def render_dashboard_html(index, out_path):
   </div>
   <div id="catalog-empty" style="display:none;text-align:center;padding:40px 0;color:#95a5a6;font-size:14px">
     No se encontraron funcionalidades.
+  </div>
+  <div id="batch-copy-bar">
+    <button id="batch-copy-btn" disabled>Copiar selección (0)</button>
   </div>
 </section>"""
 
@@ -424,6 +432,19 @@ def render_dashboard_html(index, out_path):
 .cat-kind{font-size:11px;background:#f0f3f4;color:#566573;border-radius:3px;padding:1px 6px;white-space:nowrap}
 .cat-pending-label{font-size:11px;color:#aab7b8;font-style:italic}
 .cat-file{font-size:11px;color:#aab7b8;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px}
+/* Trace button */
+.cat-trace-btn{font-size:11px;padding:2px 10px;border:1px solid #2980b9;border-radius:4px;background:#eaf4fb;color:#2980b9;cursor:pointer;white-space:nowrap;transition:background .12s,color .12s}
+.cat-trace-btn:hover{background:#2980b9;color:#fff}
+.cat-trace-btn.copied{background:#27ae60;border-color:#27ae60;color:#fff}
+/* Batch copy bar */
+#batch-copy-bar{position:sticky;bottom:16px;z-index:10;display:none;justify-content:flex-end;padding:6px 0 2px}
+#batch-copy-btn{background:#2980b9;color:#fff;border:none;border-radius:6px;padding:8px 18px;font-size:13px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.18);transition:background .12s}
+#batch-copy-btn:hover{background:#1a6395}
+#batch-copy-btn:disabled{background:#95a5a6;cursor:default}
+/* Hidden textarea for clipboard fallback */
+#clip-fallback{position:absolute;left:-9999px;top:-9999px;opacity:0;pointer-events:none}
+/* Checkbox */
+.cat-select-cb{width:14px;height:14px;flex-shrink:0;cursor:pointer}
 """
 
     # -----------------------------------------------------------------------
@@ -432,6 +453,74 @@ def render_dashboard_html(index, out_path):
     catalog_js = ""
     if catalog is not None:
         catalog_js = """
+  // ----------------------------------------------------------------
+  // Clipboard helper: try navigator.clipboard, fall back to execCommand
+  // ----------------------------------------------------------------
+  function copyToClipboard(text, btn) {
+    function doFallback(txt) {
+      var ta = document.getElementById("clip-fallback");
+      if (!ta) { ta = document.createElement("textarea"); ta.id = "clip-fallback"; document.body.appendChild(ta); }
+      ta.value = txt;
+      ta.select();
+      try { document.execCommand("copy"); } catch(e) {}
+    }
+    function onSuccess(b) {
+      if (!b) return;
+      var orig = b.textContent;
+      b.textContent = "¡Copiado!";
+      b.classList.add("copied");
+      setTimeout(function() { b.textContent = orig; b.classList.remove("copied"); }, 1500);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function() { onSuccess(btn); }).catch(function() {
+        doFallback(text); onSuccess(btn);
+      });
+    } else {
+      doFallback(text); onSuccess(btn);
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Trace buttons: copy /e2egraph flow "<feature>" to clipboard
+  // ----------------------------------------------------------------
+  document.querySelectorAll(".cat-trace-btn").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      var feature = btn.dataset.feature || "";
+      var cmd = '/e2egraph flow "' + feature.replace(/\\\\/g, "\\\\\\\\").replace(/"/g, '\\\\"') + '"';
+      copyToClipboard(cmd, btn);
+    });
+  });
+
+  // ----------------------------------------------------------------
+  // Batch select: checkboxes + "Copiar seleccion (N)" button
+  // ----------------------------------------------------------------
+  var batchBar = document.getElementById("batch-copy-bar");
+  var batchBtn = document.getElementById("batch-copy-btn");
+  var allCbs = Array.from(document.querySelectorAll(".cat-select-cb"));
+
+  function updateBatchBar() {
+    var checked = allCbs.filter(function(cb) { return cb.checked; });
+    var n = checked.length;
+    if (batchBar) batchBar.style.display = n > 0 ? "flex" : "none";
+    if (batchBtn) batchBtn.textContent = "Copiar selección (" + n + ")";
+    if (batchBtn) batchBtn.disabled = n === 0;
+  }
+
+  allCbs.forEach(function(cb) {
+    cb.addEventListener("change", updateBatchBar);
+  });
+
+  if (batchBtn) {
+    batchBtn.addEventListener("click", function() {
+      var checked = allCbs.filter(function(cb) { return cb.checked; });
+      var lines = checked.map(function(cb) {
+        var feature = cb.dataset.feature || "";
+        return '/e2egraph flow "' + feature.replace(/\\\\/g, "\\\\\\\\").replace(/"/g, '\\\\"') + '"';
+      });
+      copyToClipboard(lines.join("\\n"), batchBtn);
+    });
+  }
+
   // Catalog filtering
   var catRows = Array.from(document.querySelectorAll(".cat-row"));
   var catalogEmpty = document.getElementById("catalog-empty");

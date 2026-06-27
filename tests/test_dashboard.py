@@ -94,5 +94,25 @@ class TestDashboard(unittest.TestCase):
         self.assertNotIn("https://", html)
 
 
+    def test_pending_feature_has_trace_command(self):
+        from lib.dashboard import index_flows, attach_catalog, render_dashboard_html
+        import tempfile, os
+        idx = index_flows([])  # no traced flows
+        idx = attach_catalog(idx, [
+            {"name": "confirmPayment", "kind": "mutation", "root_field": "confirmPayment",
+             "repo": "webapp", "file": "src/q.ts", "line": 4, "role": "consumed"}], set())
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "index.html")
+            render_dashboard_html(idx, out)
+            html = open(out, encoding="utf-8").read()
+        self.assertIn("Trazar", html)                          # the button
+        self.assertIn("confirmPayment", html)                  # feature in the command
+        self.assertIn("e2egraph flow", html)                   # command text/template
+        self.assertTrue("clipboard" in html.lower() or "execcommand" in html.lower())  # copy mechanism
+        self.assertIn("selecci", html.lower())                 # batch "Copiar selección"
+        self.assertNotIn("http://", html)
+        self.assertNotIn("https://", html)
+
+
 if __name__ == "__main__":
     unittest.main()
