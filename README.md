@@ -1,5 +1,7 @@
 # e2egraph
 
+**English** | [Español](README.es.md)
+
 Turn local repositories into a navigable map of **end-to-end functional flows** — how a single feature travels from the frontend, through the GraphQL gateway / API layer, across gRPC or REST clients, into the destination microservice, down to the database table or external service it touches.
 
 It is a [Claude Code](https://docs.claude.com/en/docs/claude-code) skill (`/e2egraph`). It does **not** use any provider API key: the deterministic work is plain Python, and the semantic work runs through Claude Code subagents in your current session.
