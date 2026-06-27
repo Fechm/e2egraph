@@ -49,5 +49,50 @@ class TestDashboard(unittest.TestCase):
         self.assertNotIn("http://", html)
         self.assertNotIn("https://", html)
 
+    def test_attach_catalog_marks_traced_and_groups(self):
+        from lib.dashboard import index_flows, attach_catalog
+        FRONT = {"feature": "Guardar TNE", "slug": "saveRequestTne",
+                 "entry": {"repo": "webapp", "kind": "frontend_action", "symbol": "saveRequestTne"},
+                 "steps": [{"id": "s1", "layer": "frontend", "repo": "webapp", "title": "x",
+                            "security": {"level": "risk"}}]}
+        idx = index_flows([FRONT])
+        catalog = [
+            {"name": "saveRequestTne", "kind": "mutation", "root_field": "saveRequestTne",
+             "repo": "webapp", "file": "src/graphql/mutations/saveRequestTne.ts", "line": 2, "role": "consumed"},
+            {"name": "confirmPayment", "kind": "mutation", "root_field": "confirmPayment",
+             "repo": "webapp", "file": "src/graphql/mutations/confirmPayment.ts", "line": 4, "role": "consumed"},
+        ]
+        idx = attach_catalog(idx, catalog, {"saverequesttne"})
+        web = idx["catalog"]["webapp"]
+        saved = next(f for f in web if f["root_field"] == "saveRequestTne")
+        pending = next(f for f in web if f["root_field"] == "confirmPayment")
+        self.assertTrue(saved["traced"])
+        self.assertEqual(saved["href"], "flows/saveRequestTne.html")
+        self.assertFalse(pending["traced"])
+        self.assertIsNone(pending["href"])
+
+    def test_render_dashboard_with_catalog(self):
+        from lib.dashboard import index_flows, attach_catalog, render_dashboard_html
+        import tempfile, os
+        FRONT = {"feature": "Guardar TNE", "slug": "saveRequestTne",
+                 "entry": {"repo": "webapp", "kind": "frontend_action", "symbol": "saveRequestTne"},
+                 "steps": [{"id": "s1", "layer": "frontend", "repo": "webapp", "title": "x",
+                            "security": {"level": "risk"}}]}
+        idx = index_flows([FRONT])
+        idx = attach_catalog(idx, [
+            {"name": "confirmPayment", "kind": "mutation", "root_field": "confirmPayment",
+             "repo": "webapp", "file": "src/q.ts", "line": 4, "role": "consumed"}], {"saverequesttne"})
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "index.html")
+            render_dashboard_html(idx, out)
+            html = open(out, encoding="utf-8").read()
+        self.assertIn("confirmPayment", html)              # pending catalog item
+        self.assertIn("pendiente", html.lower())           # pending marker
+        self.assertIn("flows/saveRequestTne.html", html)   # traced link
+        self.assertIn("input", html.lower())               # search
+        self.assertNotIn("http://", html)
+        self.assertNotIn("https://", html)
+
+
 if __name__ == "__main__":
     unittest.main()

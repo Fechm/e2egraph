@@ -63,6 +63,76 @@ def _worst_security(chain):
 # Public API
 # ---------------------------------------------------------------------------
 
+def attach_catalog(index, catalog_features, traced_slugs):
+    """Attach catalog features to an index, marking traced ones with href.
+
+    Parameters
+    ----------
+    index : dict
+        The dict returned by ``index_flows()``.
+    catalog_features : list[dict]
+        Feature dicts from ``lib.catalog.extract_catalog()``.
+    traced_slugs : set[str]
+        Lower-cased slugs / entry-symbols of traced flows (used for matching).
+
+    Returns
+    -------
+    dict
+        A *new* index dict (same flows/groups/cross_links) with an additional
+        key ``"catalog"`` -> ``{repo: [annotated_feature, ...]}``.
+        Input feature dicts are NOT mutated.
+    """
+    lower_slugs = {s.lower() for s in traced_slugs}
+
+    # Build a reverse lookup: lower-case slug/symbol -> flow href
+    # so we can produce the correct href for each traced feature.
+    slug_to_href = {}
+    for flow in index.get("flows", []):
+        slug_to_href[flow["slug"].lower()] = flow["href"]
+        entry_sym = _norm(flow.get("entry_repo", ""))  # not the symbol
+    # Also index by entry symbol (the slug already IS the entry symbol in most cases,
+    # but we also walk the flows to capture entry["symbol"] values if present).
+    # We rebuild from the original flows list which stores slug and href.
+    for flow in index.get("flows", []):
+        slug_to_href[flow["slug"].lower()] = flow["href"]
+
+    catalog_by_repo = {}
+    for feat in catalog_features:
+        name_lower = feat.get("name", "").lower()
+        rf_lower = (feat.get("root_field") or "").lower()
+
+        # Determine if traced
+        traced = name_lower in lower_slugs or (rf_lower and rf_lower in lower_slugs)
+
+        # Determine href
+        href = None
+        if traced:
+            # Find which flow slug matches
+            match_key = None
+            if name_lower in lower_slugs:
+                match_key = name_lower
+            elif rf_lower in lower_slugs:
+                match_key = rf_lower
+            # slug_to_href uses the flow's slug.lower() as key; match_key is the
+            # traced_slug itself. We need the flow whose slug == match_key.
+            href = slug_to_href.get(match_key)
+            if href is None:
+                # Fallback: construct href from the matched slug
+                href = f"flows/{match_key}.html"
+
+        annotated = dict(feat)  # copy — do not mutate original
+        annotated["traced"] = traced
+        annotated["href"] = href
+
+        repo = feat.get("repo", "")
+        catalog_by_repo.setdefault(repo, []).append(annotated)
+
+    # Build result: copy index and add "catalog" key
+    result = dict(index)
+    result["catalog"] = catalog_by_repo
+    return result
+
+
 def index_flows(chains):
     """Return a dashboard index dict from a list of chain dicts.
 
@@ -164,31 +234,82 @@ def _security_badge(level):
 
 
 def render_dashboard_html(index, out_path):
-    """Write a self-contained index.html dashboard."""
+    """Write a self-contained index.html dashboard.
+
+    If ``index`` contains a ``"catalog"`` key (added by ``attach_catalog``),
+    the dashboard also renders a catalog view alongside the flows view:
+    - Sidebar lists repos with ``traced/total`` counts.
+    - A search input filters both flows and catalog items.
+    - Traced catalog features show a security badge and a link to the flow.
+    - Pending (un-traced) features are shown compact with a "pendiente de trazar" marker.
+
+    When ``index`` has NO ``"catalog"`` key the output is identical to the
+    original behaviour (existing tests pass unchanged).
+    """
     flows = index["flows"]
     groups = index["groups"]
     cross_links = index["cross_links"]
-
-    all_entry_repos = list(groups.keys())
+    catalog = index.get("catalog")  # None when not present
 
     # Inline JSON for JS filtering
     index_json = json.dumps(index, ensure_ascii=False)
 
-    # Build sidebar items HTML
-    sidebar_items = []
-    sidebar_items.append(
-        '<li><a href="#" class="sidebar-link active" data-repo="__all__">'
-        f'Todos <span class="repo-count">({len(flows)})</span></a></li>'
-    )
-    for repo in all_entry_repos:
-        count = len(groups[repo])
-        sidebar_items.append(
-            f'<li><a href="#" class="sidebar-link" data-repo="{_esc(repo)}">'
-            f'{_esc(repo)} <span class="repo-count">({count})</span></a></li>'
+    # -----------------------------------------------------------------------
+    # Sidebar: repos list
+    # -----------------------------------------------------------------------
+    # When catalog is present, collect all repos from BOTH sources.
+    if catalog is not None:
+        # Merge repos from flows (groups keys) and catalog keys, preserving order
+        all_repos_set = set(groups.keys()) | set(catalog.keys())
+        all_repos = [r for r in list(groups.keys()) if r in all_repos_set]
+        for r in catalog.keys():
+            if r not in all_repos:
+                all_repos.append(r)
+
+        # Count traced/total for each repo
+        def _repo_counts(repo):
+            cat_feats = catalog.get(repo, [])
+            total = len(cat_feats)
+            traced_count = sum(1 for f in cat_feats if f.get("traced"))
+            return traced_count, total
+
+        total_features = sum(len(v) for v in catalog.values())
+        total_traced = sum(
+            sum(1 for f in feats if f.get("traced"))
+            for feats in catalog.values()
         )
+
+        sidebar_items = []
+        sidebar_items.append(
+            '<li><a href="#" class="sidebar-link active" data-repo="__all__">'
+            f'Todos <span class="repo-count">({len(flows)} flujos)</span></a></li>'
+        )
+        for repo in all_repos:
+            tc, tot = _repo_counts(repo)
+            flow_count = len(groups.get(repo, []))
+            sidebar_items.append(
+                f'<li><a href="#" class="sidebar-link" data-repo="{_esc(repo)}">'
+                f'{_esc(repo)} <span class="repo-count">{tc}/{tot}</span></a></li>'
+            )
+    else:
+        all_entry_repos = list(groups.keys())
+        sidebar_items = []
+        sidebar_items.append(
+            '<li><a href="#" class="sidebar-link active" data-repo="__all__">'
+            f'Todos <span class="repo-count">({len(flows)})</span></a></li>'
+        )
+        for repo in all_entry_repos:
+            count = len(groups[repo])
+            sidebar_items.append(
+                f'<li><a href="#" class="sidebar-link" data-repo="{_esc(repo)}">'
+                f'{_esc(repo)} <span class="repo-count">({count})</span></a></li>'
+            )
+
     sidebar_html = "\n".join(sidebar_items)
 
-    # Build cards HTML
+    # -----------------------------------------------------------------------
+    # Build flows cards HTML (always present)
+    # -----------------------------------------------------------------------
     cards = []
     for flow in flows:
         slug = flow["slug"]
@@ -219,6 +340,135 @@ def render_dashboard_html(index, out_path):
         cards.append(card_html)
 
     cards_html = "\n".join(cards)
+
+    # -----------------------------------------------------------------------
+    # Build catalog section HTML (only when catalog is present)
+    # -----------------------------------------------------------------------
+    catalog_section_html = ""
+    if catalog is not None:
+        # Build a slug -> worst_security lookup from the indexed flows
+        slug_security = {f["slug"]: f["worst_security"] for f in flows}
+
+        catalog_rows = []
+        for repo, feats in catalog.items():
+            for feat in feats:
+                name = feat.get("name", "")
+                root_field = feat.get("root_field") or name
+                kind = feat.get("kind", "")
+                ffile = feat.get("file", "")
+                line = feat.get("line", "")
+                traced = feat.get("traced", False)
+                href = feat.get("href")
+
+                # Search text for this row
+                search_parts = [name, root_field, ffile, repo, kind]
+                row_search = " ".join(search_parts).lower()
+
+                if traced and href:
+                    # Find worst_security from the matching flow
+                    # href is like "flows/<slug>.html" → extract slug
+                    flow_slug = href.replace("flows/", "").replace(".html", "")
+                    sec = slug_security.get(flow_slug)
+                    badge_html = _security_badge(sec)
+                    row_html = (
+                        f'<div class="cat-row cat-traced" data-repo="{_esc(repo)}" data-search="{_esc(row_search)}">'
+                        f'<span class="cat-name"><a href="{_esc(href)}">{_esc(root_field)}</a></span>'
+                        f'<span class="cat-kind">{_esc(kind)}</span>'
+                        f'{badge_html}'
+                        f'<span class="cat-file">{_esc(ffile)}:{_esc(str(line))}</span>'
+                        f'</div>'
+                    )
+                else:
+                    row_html = (
+                        f'<div class="cat-row cat-pending" data-repo="{_esc(repo)}" data-search="{_esc(row_search)}">'
+                        f'<span class="cat-name cat-name-muted">{_esc(root_field)}</span>'
+                        f'<span class="cat-kind">{_esc(kind)}</span>'
+                        f'<span class="cat-pending-label">pendiente de trazar</span>'
+                        f'<span class="cat-file">{_esc(ffile)}:{_esc(str(line))}</span>'
+                        f'</div>'
+                    )
+                catalog_rows.append(row_html)
+
+        catalog_rows_html = "\n".join(catalog_rows)
+        catalog_section_html = f"""
+<section id="catalog-section">
+  <h2 class="section-title">Catálogo de funcionalidades
+    <span class="catalog-totals">{total_features} funcionalidades &middot; {total_traced} trazadas</span>
+  </h2>
+  <div id="catalog-list">
+    {catalog_rows_html}
+  </div>
+  <div id="catalog-empty" style="display:none;text-align:center;padding:40px 0;color:#95a5a6;font-size:14px">
+    No se encontraron funcionalidades.
+  </div>
+</section>"""
+
+    # -----------------------------------------------------------------------
+    # Extra CSS for catalog (injected only when needed)
+    # -----------------------------------------------------------------------
+    catalog_css = ""
+    if catalog is not None:
+        catalog_css = """
+/* Catalog section */
+.section-title{font-size:17px;font-weight:600;color:#2c3e50;margin:28px 0 12px;display:flex;align-items:baseline;gap:12px}
+.catalog-totals{font-size:12px;color:#7f8c8d;font-weight:400}
+#catalog-list{display:flex;flex-direction:column;gap:4px}
+.cat-row{display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:6px;font-size:13px;flex-wrap:wrap}
+.cat-row.hidden{display:none}
+.cat-traced{background:#fff;border:1px solid #d5e8f8}
+.cat-pending{background:#fafafa;border:1px solid #eaecee;opacity:.85}
+.cat-name{font-weight:500;color:#2c3e50;min-width:180px}
+.cat-name a{color:#2980b9;text-decoration:none}
+.cat-name a:hover{text-decoration:underline}
+.cat-name-muted{color:#7f8c8d}
+.cat-kind{font-size:11px;background:#f0f3f4;color:#566573;border-radius:3px;padding:1px 6px;white-space:nowrap}
+.cat-pending-label{font-size:11px;color:#aab7b8;font-style:italic}
+.cat-file{font-size:11px;color:#aab7b8;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px}
+"""
+
+    # -----------------------------------------------------------------------
+    # Extra JS for catalog filtering (injected only when needed)
+    # -----------------------------------------------------------------------
+    catalog_js = ""
+    if catalog is not None:
+        catalog_js = """
+  // Catalog filtering
+  var catRows = Array.from(document.querySelectorAll(".cat-row"));
+  var catalogEmpty = document.getElementById("catalog-empty");
+
+  function applyCatalogFilters() {
+    var q = searchText.trim().toLowerCase();
+    var visible = 0;
+    catRows.forEach(function(row) {
+      var repoMatch = activeRepo === "__all__" || row.dataset.repo === activeRepo;
+      var searchMatch = !q || row.dataset.search.indexOf(q) !== -1;
+      if (repoMatch && searchMatch) {
+        row.classList.remove("hidden");
+        visible++;
+      } else {
+        row.classList.add("hidden");
+      }
+    });
+    if (catalogEmpty) {
+      catalogEmpty.style.display = visible === 0 ? "block" : "none";
+    }
+  }
+"""
+        # Patch the applyFilters call to also call applyCatalogFilters
+        # (done via the combined applyAllFilters function below)
+
+    # Determine the combined filter call
+    if catalog is not None:
+        apply_all_js = """
+  function applyAllFilters() {
+    applyFilters();
+    applyCatalogFilters();
+  }
+"""
+        filter_call = "applyAllFilters"
+    else:
+        apply_all_js = ""
+        filter_call = "applyFilters"
 
     html_content = f"""<!DOCTYPE html>
 <html lang="es">
@@ -264,6 +514,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 .card-link a:hover{{text-decoration:underline}}
 /* Empty state */
 #empty-state{{display:none;text-align:center;padding:60px 0;color:#95a5a6;font-size:15px}}
+{catalog_css}
 </style>
 </head>
 <body>
@@ -281,6 +532,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     {cards_html}
   </div>
   <div id="empty-state">No se encontraron flujos.</div>
+  {catalog_section_html}
 </main>
 <script>
 (function(){{
@@ -308,6 +560,9 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     emptyState.style.display = visible === 0 ? "block" : "none";
   }}
 
+  {catalog_js}
+  {apply_all_js}
+
   // Sidebar
   document.querySelectorAll(".sidebar-link").forEach(function(link) {{
     link.addEventListener("click", function(e) {{
@@ -315,14 +570,14 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
       document.querySelectorAll(".sidebar-link").forEach(function(l) {{ l.classList.remove("active"); }});
       link.classList.add("active");
       activeRepo = link.dataset.repo;
-      applyFilters();
+      {filter_call}();
     }});
   }});
 
   // Search
   document.getElementById("search-box").addEventListener("input", function(e) {{
     searchText = e.target.value;
-    applyFilters();
+    {filter_call}();
   }});
 }})();
 </script>
