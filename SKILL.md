@@ -122,17 +122,37 @@ import json, os, glob, sys
 from lib.overview import to_overview
 from lib.render_html import render_html
 from lib.report import generate_report
-from lib.dashboard import index_flows, render_dashboard_html
+from lib.catalog import extract_catalog
+from lib.dashboard import index_flows, attach_catalog, render_dashboard_html
 root=sys.argv[1]
-g=json.load(open(os.path.join(root,'e2egraph-out','graph.json'),encoding='utf-8'))
+out=os.path.join(root,'e2egraph-out')
+g=json.load(open(os.path.join(out,'graph.json'),encoding='utf-8'))
 ov=to_overview(g)
-render_html(ov, os.path.join(root,'e2egraph-out','graph.html'))      # clean architecture view (repos+flows)
-open(os.path.join(root,'e2egraph-out','GRAPH_REPORT.md'),'w',encoding='utf-8').write(generate_report(g))
-# dashboard over any flows traced so far
-chains=[json.load(open(p,encoding='utf-8')) for p in glob.glob(os.path.join(root,'e2egraph-out','flows','*.json'))]
+render_html(ov, os.path.join(out,'graph.html'))      # clean architecture view (repos+flows)
+open(os.path.join(out,'GRAPH_REPORT.md'),'w',encoding='utf-8').write(generate_report(g))
+# load detect result for the catalog (fallback: re-run detect if file absent)
+detect_path=os.path.join(out,'.e2egraph_detect.json')
+if os.path.exists(detect_path):
+    detect_result=json.load(open(detect_path,encoding='utf-8'))
+else:
+    from lib.detect import detect
+    detect_result=detect(root)
+    json.dump(detect_result,open(detect_path,'w',encoding='utf-8'))
+# extract consumed entry points (free, deterministic)
+feats=[f for f in extract_catalog(detect_result) if f['role']=='consumed']
+# load any traced flows and build traced-slug set
+chains,traced=[],set()
+for p in glob.glob(os.path.join(out,'flows','*.json')):
+    c=json.load(open(p,encoding='utf-8')); chains.append(c)
+    traced.add((c.get('slug') or '').lower())
+    sym=(c.get('entry') or {}).get('symbol')
+    if sym: traced.add(sym.lower())
+# build index, attach catalog, render dashboard
 idx=index_flows(chains)
-render_dashboard_html(idx, os.path.join(root,'e2egraph-out','index.html'))
-print('Dashboard:', os.path.join(root,'e2egraph-out','index.html'), '| flujos:', len(chains))
+idx=attach_catalog(idx, feats, traced)
+render_dashboard_html(idx, os.path.join(out,'index.html'))
+catalog_count=sum(len(v) for v in idx['catalog'].values())
+print('Dashboard:', os.path.join(out,'index.html'), '| flujos:', len(chains), '| catalogo:', catalog_count)
 " "$ROOT"
 ```
 
@@ -208,7 +228,8 @@ After the subagent returns:
 
 ```python
 from lib.render_flow_html import render_flow_html
-from lib.dashboard import index_flows, render_dashboard_html
+from lib.catalog import extract_catalog
+from lib.dashboard import index_flows, attach_catalog, render_dashboard_html
 import json, glob, os
 
 # Save the chain
@@ -220,9 +241,23 @@ json.dump(chain, open(os.path.join(out_dir, f"{slug}.json"), "w", encoding="utf-
 # Render the individual flow page
 render_flow_html(chain, os.path.join(out_dir, f"{slug}.html"))
 
-# Rebuild the dashboard so the new flow appears
+# Rebuild the dashboard with full catalog so the new flow appears
 chains = [json.load(open(p, encoding="utf-8")) for p in glob.glob(os.path.join(root, "e2egraph-out", "flows", "*.json"))]
+traced = set()
+for c in chains:
+    traced.add((c.get("slug") or "").lower())
+    sym = (c.get("entry") or {}).get("symbol")
+    if sym: traced.add(sym.lower())
+detect_path = os.path.join(root, "e2egraph-out", ".e2egraph_detect.json")
+if os.path.exists(detect_path):
+    detect_result = json.load(open(detect_path, encoding="utf-8"))
+else:
+    from lib.detect import detect
+    detect_result = detect(root)
+    json.dump(detect_result, open(detect_path, "w", encoding="utf-8"))
+feats = [f for f in extract_catalog(detect_result) if f["role"] == "consumed"]
 idx = index_flows(chains)
+idx = attach_catalog(idx, feats, traced)
 render_dashboard_html(idx, os.path.join(root, "e2egraph-out", "index.html"))
 ```
 
@@ -234,15 +269,34 @@ Report to the user: the flow HTML path, the dashboard path, and a one-paragraph 
 
 This command is deterministic and costs zero tokens.
 
-Load `e2egraph-out/graph.json` and list the detectable features/operations grouped by repo:
+**Two-level model:**
 
-- **GraphQL operations** — nodes or edges with kind `defines_gql_op` or `calls_gql_op`: list operation name, kind (query/mutation/subscription), and the repo that defines/consumes it.
-- **Endpoint paths** — edges with kind `defines_endpoint`: list method + path + repo.
-- **Notable symbols** — high-centrality nodes (many edges) that represent a clear entry point (e.g. a controller, a resolver class, a CLI command).
+- **Catalog (free, deterministic):** The dashboard (`e2egraph-out/index.html`) already renders the full feature catalog grouped by repo. It includes a live text search and marks each entry as `traced` (a `flows/<slug>.json` exists) or `pending` (not yet traced). The catalog is built by `extract_catalog` from the detect result — no tokens consumed.
+- **Deep trace (paid, cached):** `/e2egraph flow "<feature>"` traces one entry point end-to-end (frontend → gateway → microservice → data), spending session tokens. The result is cached as `flows/<slug>.json` and the dashboard card is updated automatically.
 
-For each item, check whether a `flows/<slug>.json` already exists that covers it (match by operation name or endpoint path). If yes, mark it as **already traced** and note which dashboard card covers it (link to `e2egraph-out/flows/<slug>.html`).
+**When the user runs `/e2egraph flows`:**
 
-Present the catalog in a readable table or grouped list so the user can pick one and pass it to `/e2egraph flow "<feature>"`.
+Point the user to `e2egraph-out/index.html` — open it in a browser to browse and search the full catalog with traced/pending markers. If the user wants the catalog in chat (no browser), extract it in-session:
+
+```python
+import json, os
+from lib.catalog import extract_catalog
+root = "$ROOT"   # fill in at runtime
+detect_path = os.path.join(root, "e2egraph-out", ".e2egraph_detect.json")
+detect_result = json.load(open(detect_path, encoding="utf-8"))
+feats = [f for f in extract_catalog(detect_result) if f["role"] == "consumed"]
+# group by repo and print
+from collections import defaultdict
+by_repo = defaultdict(list)
+for f in feats:
+    by_repo[f["repo"]].append(f)
+for repo, items in sorted(by_repo.items()):
+    print(f"\n### {repo}")
+    for f in items:
+        print(f"  {f['kind']:20s}  {f['name']}  ({f['file']}:{f['line']})")
+```
+
+Present the output as a grouped list and offer to trace any entry with `/e2egraph flow "<feature>"`.
 
 ## Honesty & security rules
 
