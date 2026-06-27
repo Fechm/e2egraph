@@ -117,5 +117,24 @@ class TestCatalog(unittest.TestCase):
         marked = mark_traced(feats, {"completely_different"})
         self.assertFalse(marked[0]["traced"])
 
+    def test_anonymous_gql_operation_identified_by_root_field(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._repo(root, "web/package.json", "{}")
+            self._repo(root, "web/src/graphql/mutations/changeOrder.ts",
+                       "import gql from 'graphql-tag';\n"
+                       "export default gql`\n"
+                       "  mutation ($i: ChangeOrderEntityInput!) {\n"
+                       "    changeOrderEntity(input: $i) {\n"
+                       "      response { statusCode }\n"
+                       "    }\n"
+                       "  }\n`;\n")
+            det = detect(root)
+            feats = extract_catalog(det)
+            f = next((x for x in feats if x.get("root_field") == "changeOrderEntity"), None)
+            self.assertIsNotNone(f)
+            self.assertEqual(f["kind"], "mutation")
+            self.assertEqual(f["role"], "consumed")
+            self.assertEqual(f["name"], "changeOrderEntity")  # anónima -> cae al root field
+
 if __name__ == "__main__":
     unittest.main()

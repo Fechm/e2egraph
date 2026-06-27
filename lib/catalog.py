@@ -34,19 +34,22 @@ from lib.io_utils import read_text_safe
 # Matches  gql`...`  spanning multiple lines (non-greedy, DOTALL)
 _GQL_TEMPLATE_RE = re.compile(r"gql`(.*?)`", re.DOTALL)
 
-# Operation header: query/mutation/subscription <Name> (optional variables)
+# Operation header: query/mutation/subscription with OPTIONAL <Name> and OPTIONAL
+# variable definitions, up to the opening brace of the selection set.
+# Real-world GraphQL ops are frequently anonymous (no name after the keyword),
+# e.g.  `mutation ($input: Foo!) { changeOrderEntity(...) { ... } }`.
 _OP_HEADER_RE = re.compile(
-    r"\b(query|mutation|subscription)\s+([A-Za-z_]\w*)(?:\s*\([^)]*\))?\s*\{",
+    r"\b(query|mutation|subscription)\s*([A-Za-z_]\w*)?\s*(?:\([^)]*\))?\s*\{",
     re.IGNORECASE,
 )
 
 # Standalone .graphql/.gql operation header (same pattern, used directly on file text)
 _GQL_FILE_OP_RE = _OP_HEADER_RE
 
-# Root field: first identifier token immediately inside the outermost `{ ... }`
-# We use a simple heuristic: find the first word-token after the opening brace
-# (skipping whitespace, directives, etc.)
-_FIRST_FIELD_RE = re.compile(r"^\s*([A-Za-z_]\w*)", re.MULTILINE)
+# Root field: first real identifier token inside the selection set `{ ... }`.
+# We scan token by token, skipping whitespace, and ignore the meta-field
+# `__typename` (which is not the feature being traced).
+_FIELD_TOKEN_RE = re.compile(r"[A-Za-z_]\w*")
 
 # NestJS resolver decorators
 # @Query(() => X)  |  @Mutation(() => X)  |  @ResolveField(() => X)
@@ -105,10 +108,16 @@ def _line_of_offset(text, offset):
 
 
 def _extract_root_field(body_after_brace):
-    """Extract the first identifier in *body_after_brace* (text after the opening '{')."""
-    m = _FIRST_FIELD_RE.search(body_after_brace)
-    if m:
-        return m.group(1)
+    """Extract the first real field in *body_after_brace* (text after the opening '{').
+
+    Skips the meta-field ``__typename`` so the captured root field reflects the
+    actual feature being traced.
+    """
+    for m in _FIELD_TOKEN_RE.finditer(body_after_brace):
+        token = m.group(0)
+        if token == "__typename":
+            continue
+        return token
     return None
 
 
@@ -137,7 +146,7 @@ def _extract_gql_operations(text, rel_path, repo_name):
     for chunk, base_offset in chunks:
         for op_m in _OP_HEADER_RE.finditer(chunk):
             kind = op_m.group(1).lower()
-            name = op_m.group(2)
+            op_name = op_m.group(2)  # None when the operation is anonymous
 
             # Absolute offset of the operation keyword in the original file
             abs_offset = base_offset + op_m.start()
@@ -146,6 +155,13 @@ def _extract_gql_operations(text, rel_path, repo_name):
             # Root field: text after the `{` that opens the selection set
             after_brace = chunk[op_m.end():]
             root_field = _extract_root_field(after_brace)
+
+            # The display name is the operation name when present; anonymous
+            # operations fall back to their root field (the actual feature).
+            name = op_name or root_field
+            if not name:
+                # Neither a name nor a discernible root field: not useful.
+                continue
 
             yield {
                 "name": name,
