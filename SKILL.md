@@ -10,14 +10,13 @@ Turn local repos into a navigable knowledge graph and trace end-to-end flow acro
 ## Usage
 
 ```
-/e2egraph                      # current dir as root: build each repo + the general graph
-/e2egraph <repo-path>          # build/update one repo, recompute the general graph
+/e2egraph                      # build/refresh the dashboard (index.html) over the root
 /e2egraph --root C:\IACC       # set the parent root explicitly
 /e2egraph --update             # incremental: only changed repos
+/e2egraph flows                # catalog: list detected features/operations to trace
+/e2egraph flow "<feature>"     # trace ONE feature end-to-end (frontend→…→data) and add it to the dashboard
 /e2egraph --depth structural   # skip the semantic layer (zero Claude tokens)
-/e2egraph --no-ctags           # force regex fallback for symbols
 /e2egraph query "<question>"   # answer from graph.json via the session (no API key)
-/e2egraph path "repoA/x" "repoB/y"   # flow/path between two points
 ```
 
 ## What you must do when invoked
@@ -115,27 +114,135 @@ Also dispatch one additional subagent that reads the merged `graph.json` node li
 
 **Guarantee:** No API key is used at any point. All subagents run inside the current Claude Code session via the Agent tool.
 
-### Step 5 - Render outputs
+### Step 5 - Render overview and dashboard
 
 ```bash
 cd "$SKILL_DIR" && "$PYTHON" -c "
-import json, os, sys
+import json, os, glob, sys
+from lib.overview import to_overview
 from lib.render_html import render_html
 from lib.report import generate_report
-root=sys.argv[1]; g=json.load(open(os.path.join(root,'e2egraph-out','graph.json'),encoding='utf-8'))
-render_html(g, os.path.join(root,'e2egraph-out','graph.html'))
+from lib.dashboard import index_flows, render_dashboard_html
+root=sys.argv[1]
+g=json.load(open(os.path.join(root,'e2egraph-out','graph.json'),encoding='utf-8'))
+ov=to_overview(g)
+render_html(ov, os.path.join(root,'e2egraph-out','graph.html'))      # clean architecture view (repos+flows)
 open(os.path.join(root,'e2egraph-out','GRAPH_REPORT.md'),'w',encoding='utf-8').write(generate_report(g))
-print('Wrote graph.html and GRAPH_REPORT.md')
+# dashboard over any flows traced so far
+chains=[json.load(open(p,encoding='utf-8')) for p in glob.glob(os.path.join(root,'e2egraph-out','flows','*.json'))]
+idx=index_flows(chains)
+render_dashboard_html(idx, os.path.join(root,'e2egraph-out','index.html'))
+print('Dashboard:', os.path.join(root,'e2egraph-out','index.html'), '| flujos:', len(chains))
 " "$ROOT"
 ```
 
 ### Step 6 - Report
 
-Tell the user where the outputs are (`<root>/e2egraph-out/`), paste the **E2E Flows** section of `GRAPH_REPORT.md`, and offer to trace the most interesting flow with `/e2egraph query`.
+Tell the user that the entry point is `<root>/e2egraph-out/index.html` (the central dashboard — sidebar by entry repo, live text search, cross-links to each traced flow). Note that `graph.html` has the clean architecture view (repos + shared resources + flow edges). Paste the **E2E Flows** section of `GRAPH_REPORT.md`. Offer to trace the most interesting flow with `/e2egraph flow "<feature>"` (traces a feature end-to-end from frontend to data layer and adds it to the dashboard).
 
-## For /e2egraph query and path
+## For /e2egraph query
 
-When `e2egraph-out/graph.json` exists and the user asks a question, load it and answer using only its nodes/edges/flows; cite `source_location`. For `path`, do a BFS over edges between the two node ids and report the chain. No API key - reason over the JSON in-session.
+When `e2egraph-out/graph.json` exists and the user asks a question, load it and answer using only its nodes/edges/flows; cite `source_location`. No API key — reason over the JSON in-session.
+
+## For /e2egraph flow "<feature>"
+
+The controlling agent (Claude Code session) executes this protocol. No provider API key is used at any point — subagents run inside the current Claude Code session via the Agent tool.
+
+**1. Resolve the feature.**
+From `graph.json`, find where the named feature/operation is used: a frontend action, a GraphQL operation, or a named endpoint. If ambiguous, show the candidates and ask the user to clarify.
+
+**2. Dispatch a Claude Code subagent (Agent tool, general-purpose).**
+The subagent READS the real code and traces the chain hop by hop:
+
+  frontend → gateway resolver → gRPC/REST client → proto/contract → microservice handler → DB table/service
+
+The subagent must return STRICT JSON only (no markdown fences), with this exact structure:
+
+```json
+{
+  "feature": "<human-readable name>",
+  "slug": "<kebab-case-identifier>",
+  "entry": { "repo": "<name>", "kind": "frontend|gateway|service", "symbol": "<symbol>" },
+  "summary": "<one paragraph end-to-end description>",
+  "steps": [
+    {
+      "id": "<slug-step-N>",
+      "layer": "frontend|gateway_resolver|grpc_client|proto|microservice|data",
+      "repo": "<repo name>",
+      "title": "<step title>",
+      "file": "<relative/path/to/file>",
+      "line": <line number or null>,
+      "mechanism": "<e.g. GraphQL mutation, gRPC call, SQL query>",
+      "detail": "<what happens here>",
+      "used_in": ["<other feature slugs that share this step>"],
+      "participants": ["<repo names involved>"],
+      "security": {
+        "level": "ok|review|risk",
+        "controls": ["<control description with file:line>"],
+        "flags": ["<flag description with file:line>"],
+        "note": "<optional free text>"
+      },
+      "data_shape": {
+        "label": "<e.g. CreateUserInput>",
+        "kind": "graphql_input|proto_message|joi_schema|db_model|unknown",
+        "source": "<file:line>",
+        "fields": [
+          { "name": "<field>", "type": "<type>", "required": true, "note": "<optional>" }
+        ]
+      }
+    }
+  ]
+}
+```
+
+The `security` and `data_shape` blocks are optional per step but should be included whenever the real code provides enough evidence.
+
+**Honesty rules for the subagent:**
+- Never fabricate a hop, field, or security control that is not present in the actual code.
+- When uncertain about a hop, set `"level": "review"` and explain what could not be confirmed.
+- For security: NEVER stamp a step as "secure" — always report the controls that are present plus any flags (e.g. missing auth check, no input validation) with exact `file:line`.
+- Extract `data_shape` from the real GraphQL input type, proto message, Joi schema, or DB model — do not guess field names.
+
+**3. Render and save.**
+After the subagent returns:
+
+```python
+from lib.render_flow_html import render_flow_html
+from lib.dashboard import index_flows, render_dashboard_html
+import json, glob, os
+
+# Save the chain
+slug = chain["slug"]
+out_dir = os.path.join(root, "e2egraph-out", "flows")
+os.makedirs(out_dir, exist_ok=True)
+json.dump(chain, open(os.path.join(out_dir, f"{slug}.json"), "w", encoding="utf-8"), indent=2)
+
+# Render the individual flow page
+render_flow_html(chain, os.path.join(out_dir, f"{slug}.html"))
+
+# Rebuild the dashboard so the new flow appears
+chains = [json.load(open(p, encoding="utf-8")) for p in glob.glob(os.path.join(root, "e2egraph-out", "flows", "*.json"))]
+idx = index_flows(chains)
+render_dashboard_html(idx, os.path.join(root, "e2egraph-out", "index.html"))
+```
+
+Report to the user: the flow HTML path, the dashboard path, and a one-paragraph summary of the chain.
+
+**Token cost note:** Tracing a flow uses session tokens (the subagent reads real code). The result is cached as `flows/<slug>.json`. Re-running the dashboard step (to refresh `index.html` after tracing more flows) is deterministic and costs zero tokens.
+
+## For /e2egraph flows
+
+This command is deterministic and costs zero tokens.
+
+Load `e2egraph-out/graph.json` and list the detectable features/operations grouped by repo:
+
+- **GraphQL operations** — nodes or edges with kind `defines_gql_op` or `calls_gql_op`: list operation name, kind (query/mutation/subscription), and the repo that defines/consumes it.
+- **Endpoint paths** — edges with kind `defines_endpoint`: list method + path + repo.
+- **Notable symbols** — high-centrality nodes (many edges) that represent a clear entry point (e.g. a controller, a resolver class, a CLI command).
+
+For each item, check whether a `flows/<slug>.json` already exists that covers it (match by operation name or endpoint path). If yes, mark it as **already traced** and note which dashboard card covers it (link to `e2egraph-out/flows/<slug>.html`).
+
+Present the catalog in a readable table or grouped list so the user can pick one and pass it to `/e2egraph flow "<feature>"`.
 
 ## Honesty & security rules
 
@@ -143,3 +250,5 @@ When `e2egraph-out/graph.json` exists and the user asks a question, load it and 
 - Never write env-var values or full secret names to any artifact (handled by `lib/secrets_filter`).
 - Always show semantic-layer token counts.
 - Warn before rendering HTML for a graph above ~5000 nodes; collapse to repo/module view.
+- Security observations in flow traces are heuristic and per-step: report controls that are present with evidence (file:line) and flags where controls are missing or weak. Never issue a binary "secure" verdict for a step or the overall flow.
+- The dashboard (`index.html`), search, and overview (`graph.html`) are fully deterministic and cost zero tokens. Only tracing a flow with `/e2egraph flow` uses session tokens (the subagent reads real code).
