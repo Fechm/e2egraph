@@ -46,5 +46,44 @@ class TestRenderFlowHtml(unittest.TestCase):
             render_flow_html(chain, out)  # must not raise
             self.assertTrue(os.path.exists(out))
 
+    def test_security_badge_and_panel(self):
+        chain = {"feature": "f", "steps": [
+            {"id": "s1", "layer": "gateway_resolver", "repo": "gateway-api", "title": "Resolver",
+             "file": "src/r.ts", "line": 10,
+             "security": {"level": "risk",
+                          "controls": ["JWT guard — r.ts:8"],
+                          "flags": ["token en cookie sin httpOnly — auth.ts:45"],
+                          "note": "Revisión heurística; no sustituye auditoría."}},
+            {"id": "s2", "layer": "data", "repo": "x", "title": "tabla y"},  # no security
+        ]}
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "f.html")
+            from lib.render_flow_html import render_flow_html
+            render_flow_html(chain, out)
+            with open(out, encoding="utf-8") as fh:
+                html = fh.read()
+        self.assertIn("Seguridad", html)
+        self.assertIn("riesgo", html.lower())                      # honest label for 'risk'
+        self.assertIn("httpOnly", html)                            # the flag text + file:line
+        self.assertIn("JWT guard", html)                           # the control
+        self.assertNotIn("es seguro", html.lower())                # never claims "secure"
+        self.assertNotIn("http://", html)
+        self.assertNotIn("https://", html)
+
+    def test_default_disclaimer_when_note_missing(self):
+        chain = {"feature": "f", "steps": [
+            {"id": "s1", "layer": "data", "repo": "x", "title": "t",
+             "security": {"level": "ok", "controls": ["query parametrizada"]}}]}
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "f.html")
+            from lib.render_flow_html import render_flow_html
+            render_flow_html(chain, out)
+            with open(out, encoding="utf-8") as fh:
+                html = fh.read()
+        self.assertIn("no sustituye", html.lower())  # default disclaimer present
+
+
 if __name__ == "__main__":
     unittest.main()

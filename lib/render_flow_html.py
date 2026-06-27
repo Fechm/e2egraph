@@ -6,6 +6,22 @@ import html
 import json
 
 
+# Security level colours and honest labels (never claim "seguro"/"secure")
+_SECURITY_COLORS = {
+    "ok":     "#16a34a",
+    "review": "#ca8a04",
+    "risk":   "#dc2626",
+}
+_SECURITY_LABELS = {
+    "ok":     "controles",
+    "review": "revisar",
+    "risk":   "riesgo",
+}
+_DEFAULT_SECURITY_NOTE = (
+    "Revisión heurística de este paso; no sustituye una auditoría de seguridad."
+)
+
+
 # Layer colour palette
 _LAYER_COLORS = {
     "frontend":         "#2563eb",
@@ -71,6 +87,18 @@ def render_flow_html(chain, out_path):
 
         subtitle = f"{repo} · {file_label}" if file_label else repo
 
+        # Security badge (optional)
+        sec         = step.get("security")
+        sec_badge   = ""
+        if sec and sec.get("level"):
+            sec_level      = sec["level"]
+            sec_color      = _SECURITY_COLORS.get(sec_level, "#94a3b8")
+            sec_label      = _esc(_SECURITY_LABELS.get(sec_level, sec_level))
+            sec_badge = (
+                f'<span class="sec-chip" '
+                f'style="background:{sec_color};">{sec_label}</span>'
+            )
+
         # Connector (mechanism label) between this box and the next
         connector_html = ""
         mechanism = step.get("mechanism")
@@ -87,7 +115,7 @@ def render_flow_html(chain, out_path):
         selected_class = ' selected' if idx == 0 else ''
         step_boxes_html.append(f"""
     <div class="step-box{selected_class}" data-step-index="{idx}" onclick="selectStep({idx})">
-      <span class="layer-chip" style="background:{color};">{layer_esc}</span>
+      <span class="layer-chip" style="background:{color};">{layer_esc}</span>{(" " + sec_badge) if sec_badge else ""}
       <div class="step-title">{title}</div>
       <div class="step-subtitle">{_esc(subtitle)}</div>
     </div>{connector_html}""")
@@ -214,6 +242,53 @@ header p  { font-size: .9rem; color: #94a3b8; margin-top: .3rem; }
 }
 .next-hop-arrow { font-size: 1rem; color: #0284c7; }
 .next-hop-label { font-size: .82rem; color: #0369a1; font-weight: 600; }
+/* Security chip (on step box) */
+.sec-chip {
+  display: inline-block;
+  color: #fff;
+  font-size: .62rem;
+  font-weight: 700;
+  padding: .1rem .45rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  vertical-align: middle;
+  margin-left: .25rem;
+}
+/* Security block in detail panel */
+.security-block {
+  margin-top: 1rem;
+  border-top: 1px solid #e2e8f0;
+  padding-top: .75rem;
+}
+.security-block .sec-level-badge {
+  display: inline-block;
+  color: #fff;
+  font-size: .72rem;
+  font-weight: 700;
+  padding: .2rem .6rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-bottom: .5rem;
+}
+.security-block .sec-list {
+  list-style: none;
+  padding: 0;
+  margin: .3rem 0 .5rem;
+}
+.security-block .sec-list li {
+  font-size: .82rem;
+  color: #1e293b;
+  padding: .15rem 0;
+  word-break: break-word;
+}
+.security-block .sec-note {
+  font-size: .75rem;
+  color: #94a3b8;
+  font-style: italic;
+  margin-top: .4rem;
+}
 """
 
     # ------------------------------------------------------------------ #
@@ -289,6 +364,51 @@ function selectStep(idx) {{
       html += '<span class="next-hop-label">' + escHtml(nextStep.repo) + ' / ' + escHtml(nextStep.title) + '</span>';
       html += '</div></div>';
     }}
+  }}
+
+  // Security section (only when step.security is present)
+  if (step.security) {{
+    var sec = step.security;
+    var secColors = {json.dumps(_SECURITY_COLORS)};
+    var secLabels = {json.dumps(_SECURITY_LABELS)};
+    var defaultNote = {json.dumps(_DEFAULT_SECURITY_NOTE)};
+
+    html += '<div class="security-block">';
+    html += '<div class="detail-label">Seguridad</div>';
+
+    if (sec.level) {{
+      var secColor = secColors[sec.level] || '#94a3b8';
+      var secLabel = secLabels[sec.level] || escHtml(sec.level);
+      html += '<span class="sec-level-badge" style="background:' + secColor + ';">' + escHtml(secLabel) + '</span>';
+    }}
+
+    // Controls
+    if (sec.controls && sec.controls.length > 0) {{
+      html += '<div class="detail-label" style="margin-top:.4rem;">Controles detectados</div>';
+      html += '<ul class="sec-list">';
+      sec.controls.forEach(function(c) {{
+        html += '<li>&#10003; ' + escHtml(c) + '</li>';
+      }});
+      html += '</ul>';
+    }}
+
+    // Flags
+    if (sec.flags && sec.flags.length > 0) {{
+      html += '<div class="detail-label" style="margin-top:.4rem;">Banderas / riesgos</div>';
+      html += '<ul class="sec-list">';
+      sec.flags.forEach(function(f) {{
+        html += '<li>&#9888; ' + escHtml(f) + '</li>';
+      }});
+      html += '</ul>';
+    }} else {{
+      html += '<div class="detail-value" style="margin-top:.3rem;color:#64748b;">No se detectaron problemas en este paso.</div>';
+    }}
+
+    // Note (use default if not provided)
+    var note = (sec.note != null && sec.note !== '') ? sec.note : defaultNote;
+    html += '<div class="sec-note">' + escHtml(note) + '</div>';
+
+    html += '</div>';
   }}
 
   panel.innerHTML = html;
